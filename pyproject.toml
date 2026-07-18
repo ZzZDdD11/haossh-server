@@ -27,6 +27,9 @@ dependencies = [
     # "asyncmy>=0.2.0",
     # Phase 4+
     # "mcp>=1.0.0",
+    "python-multipart>=0.0.32",
+    "langgraph>=1.2.9",
+    "pydantic-ai>=2.13.0",
 ]
 
 [project.optional-dependencies]
