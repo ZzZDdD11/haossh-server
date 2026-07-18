@@ -1,0 +1,43 @@
+[project]
+name = "haossh-server"
+version = "0.1.0"
+description = "AI-driven SSH operations platform"
+requires-python = ">=3.11"
+dependencies = [
+    # Web
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # Config
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "pyyaml>=6.0",
+    # SSH
+    "asyncssh>=2.18.0",
+    "cryptography>=44.0.0",
+    # Logging
+    "structlog>=24.0.0",
+    # Utils
+    "httpx>=0.28.0",
+    # Phase 2+
+    # "langgraph>=0.2.0",
+    # "langchain>=0.3.0",
+    # "langchain-openai>=0.3.0",
+    # Phase 3+
+    # "sqlalchemy[asyncio]>=2.0.0",
+    # "asyncmy>=0.2.0",
+    # Phase 4+
+    # "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/haossh"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
