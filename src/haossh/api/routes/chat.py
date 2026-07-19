@@ -18,7 +18,7 @@ async def chat_stream(req: ChatRequest):
 
     async def generator():
         async with agent.run_stream(req.message, deps=deps) as result:
-            async for chunk in result.stream_text():
+            async for chunk in result.stream_text(delta=True):
                 yield f"data: {chunk}\n\n"
         yield "data: [DONE]\n\n"
     return StreamingResponse(
