@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
+from haossh.agent.deps import AgentDeps
+from haossh.agent.tools import tools
 from haossh.config import settings
 
 # pydantic-ai 自动从 DEEPSEEK_API_KEY 环境变量读取密钥
@@ -20,4 +22,6 @@ agent = Agent(
         provider="deepseek",
     ),
     system_prompt=SYSTEM_PROMPT,
+    tools=tools,
+    deps_type=AgentDeps,
 )

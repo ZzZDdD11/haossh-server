@@ -92,12 +92,12 @@ async def close_terminal(terminalSessionId: str = Query(..., alias="terminalSess
 async def exec_command(req: ExecCommandRequest):
     """执行单条命令（非交互式，不走 PTY）。"""
     try:
-        stdout, stderr = await terminal.exec_command(
+        stdout, stderr, exit_status = await terminal.exec_command(
             connection_id=req.connection_id,
             command=req.command,
             timeout=req.timeout,
         )
-        return _ok({"stdout": stdout, "stderr": stderr})
+        return _ok({"stdout": stdout, "stderr": stderr, "exitStatus": exit_status})
     except ValueError as e:
         logger.warning("命令执行失败: %s", e)
         return _err(str(e))

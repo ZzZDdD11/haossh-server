@@ -153,11 +153,11 @@ async def close(terminal_session_id: str) -> bool:
     return True
 
 
-async def exec_command(connection_id: str, command: str, timeout: int = 30) -> tuple[str, str]:
+async def exec_command(connection_id: str, command: str, timeout: int = 30) -> tuple[str, str, int]:
     """在 SSH 连接上执行单条命令（非交互式，不走 PTY）。
 
     Returns:
-        (stdout, stderr)
+        (stdout, stderr, exit_status)
     """
     conn = ssh_sessions.get(connection_id)
     if conn is None:
@@ -166,5 +166,6 @@ async def exec_command(connection_id: str, command: str, timeout: int = 30) -> t
     result = await conn.run(command, timeout=timeout)
     stdout = result.stdout or ""
     stderr = result.stderr or ""
-    logger.debug("命令执行完成 connection_id=%s command=%s exit=%s", connection_id, command, result.exit_status)
-    return str(stdout), str(stderr)
+    exit_status = result.exit_status if result.exit_status is not None else -1
+    logger.debug("命令执行完成 connection_id=%s command=%s exit=%s", connection_id, command, exit_status)
+    return str(stdout), str(stderr), exit_status

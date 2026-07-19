@@ -118,6 +118,13 @@ async def file_exists(connection_id: str, path: str) -> bool:
     return await sftp.exists(path)
 
 
+async def get_size(connection_id: str, path: str) -> int:
+    """获取文件大小（字节）。"""
+    sftp = await _get_sftp(connection_id)
+    attrs = await sftp.stat(path)
+    return attrs.size or 0
+
+
 # ── 文件编辑 ──────────────────────────────────────────────────
 
 async def create_file(connection_id: str, path: str, content: str = "") -> None:
