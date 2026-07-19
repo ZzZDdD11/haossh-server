@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>haossh // debug console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e14;
+    --bg-elevated: #11161d;
+    --bg-inset: #06090d;
+    --border: #1f2630;
+    --border-bright: #2d3744;
+    --fg: #c9d1d9;
+    --fg-dim: #6b7785;
+    --fg-mute: #4a5462;
+    --accent: #e6b450;          /* 琥珀金 - 主强调 */
+    --accent-dim: #8a6f30;
+    --accent-glow: rgba(230, 180, 80, 0.35);
+    --cyan: #56b6c2;            /* 青色 - AI */
+    --cyan-glow: rgba(86, 182, 194, 0.3);
+    --green: #7ec699;           /* 已连接 */
+    --red: #f47067;             /* 错误/断开 */
+    --magenta: #d2a8ff;         /* 工具/调试 */
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --display: 'Space Mono', var(--mono);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--bg);
+    background-image:
+      linear-gradient(rgba(230,180,80,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(230,180,80,0.025) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: -1px -1px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 顶部扫描线 */
+  .scanline {
+    position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 100;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: scan 8s linear infinite;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  @keyframes scan {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  /* 顶栏 */
+  .topbar {
+    height: 48px;
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-elevated), var(--bg));
+    position: relative;
+  }
+  .topbar::after {
+    content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
+    opacity: 0.4;
+  }
+  .brand {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    text-shadow: 0 0 12px var(--accent-glow);
+  }
+  .brand .slash { color: var(--fg-mute); margin: 0 4px; }
+  .brand .sub { color: var(--fg-dim); font-weight: 400; }
+
+  .status-pill {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 12px;
+    border: 1px solid var(--border-bright);
+    border-radius: 2px;
+    background: var(--bg-inset);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  .status-dot.connected { background: var(--green); animation: pulse-green 2s ease-in-out infinite; }
+  .status-dot.connecting { background: var(--accent); animation: pulse-amber 1s ease-in-out infinite; }
+  @keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(126, 198, 153, 0.6); }
+    50% { box-shadow: 0 0 0 6px rgba(126, 198, 153, 0); }
+  }
+  @keyframes pulse-amber {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(230, 180, 80, 0.6); }
+    50% { box-shadow: 0 0 0 6px rgba(230, 180, 80, 0); }
+  }
+  .status-text { color: var(--fg-dim); }
+  .status-text.connected { color: var(--green); }
+  .status-text.connecting { color: var(--accent); }
+
+  .conn-id {
+    font-size: 11px; color: var(--fg-mute);
+    padding: 4px 10px; border: 1px dashed var(--border-bright);
+    border-radius: 2px;
+  }
+  .conn-id .label { color: var(--fg-mute); }
+  .conn-id .val { color: var(--cyan); margin-left: 6px; }
+
+  /* 三栏布局 */
+  .app {
+    display: grid;
+    grid-template-columns: 280px 1fr 360px;
+    height: calc(100vh - 48px);
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .panel {
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-elevated);
+  }
+  .panel-title {
+    font-family: var(--display);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+  .panel-title .num {
+    color: var(--accent); margin-right: 6px;
+  }
+  .panel-body {
+    flex: 1; overflow-y: auto;
+    padding: 16px;
+  }
+  .panel-body::-webkit-scrollbar { width: 6px; }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+  .panel-body::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
+  /* 左栏 - 连接管理 */
+  .form-group { margin-bottom: 14px; }
+  .form-label {
+    display: block; font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--fg-mute);
+    margin-bottom: 5px;
+  }
+  .form-input {
+    width: 100%; padding: 8px 10px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--fg);
+    font-family: var(--mono); font-size: 12px;
+    transition: all 0.15s;
+  }
+  .form-input:focus {
+    outline: none;
+    border-color: var(--accent-dim);
+    box-shadow: 0 0 0 2px rgba(230, 180, 80, 0.1);
+  }
+  .form-input::placeholder { color: var(--fg-mute); }
+  .form-row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; }
+
+  .btn {
+    width: 100%; padding: 9px 12px;
+    background: transparent;
+    border: 1px solid var(--accent-dim);
+    color: var(--accent);
+    font-family: var(--display); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn::before {
+    content: ''; position: absolute; inset: 0;
+    background: var(--accent); opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .btn:hover:not(:disabled) {
+    color: var(--bg);
+    box-shadow: 0 0 16px var(--accent-glow);
+  }
+  .btn:hover:not(:disabled)::before { opacity: 1; }
+  .btn span { position: relative; z-index: 1; }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; border-color: var(--border-bright); color: var(--fg-mute); }
+
+  .btn.danger { border-color: rgba(244, 112, 103, 0.4); color: var(--red); }
+  .btn.danger:hover:not(:disabled) { background: var(--red); color: var(--bg); box-shadow: 0 0 16px rgba(244,112,103,0.3); }
+  .btn.danger:hover:not(:disabled)::before { background: var(--red); }
+
+  .divider {
+    height: 1px; background: var(--border);
+    margin: 18px 0;
+    position: relative;
+  }
+  .divider::before {
+    content: attr(data-label);
+    position: absolute; left: 0; top: -7px;
+    background: var(--bg); padding-right: 8px;
+    font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--fg-mute);
+  }
+
+  .info-block {
+    font-size: 11px; color: var(--fg-dim);
+    line-height: 1.7;
+  }
+  .info-block .k { color: var(--fg-mute); }
+  .info-block .v { color: var(--cyan); }
+
+  /* 中栏 - 对话 */
+  .chat-panel { background: var(--bg); }
+  .messages {
+    flex: 1; overflow-y: auto;
+    padding: 20px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .messages::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-track { background: transparent; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+
+  .message {
+    max-width: 88%;
+    animation: msg-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  @keyframes msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .message-meta {
+    font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .message.user .message-meta { color: var(--accent); justify-content: flex-end; }
+  .message.ai .message-meta { color: var(--cyan); }
+  .message-meta .role { font-family: var(--display); font-weight: 700; }
+  .message-meta .time { color: var(--fg-mute); }
+
+  .message-bubble {
+    padding: 12px 14px;
+    border: 1px solid;
+    border-radius: 2px;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .message.user .message-bubble {
+    border-color: rgba(230, 180, 80, 0.3);
+    background: rgba(230, 180, 80, 0.04);
+    margin-left: auto;
+  }
+  .message.ai .message-bubble {
+    border-color: rgba(86, 182, 194, 0.3);
+    background: rgba(86, 182, 194, 0.04);
+  }
+  .message.ai.streaming .message-bubble::after {
+    content: '▋'; color: var(--cyan);
+    animation: blink 0.8s steps(2) infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: var(--fg-mute); gap: 12px;
+    text-align: center; padding: 40px;
+  }
+  .empty-state .glyph {
+    font-family: var(--display); font-size: 28px;
+    color: var(--accent-dim); opacity: 0.6;
+    letter-spacing: 0.2em;
+  }
+  .empty-state .hint { font-size: 12px; max-width: 320px; line-height: 1.7; }
+
+  /* 输入区 */
+  .chat-input-wrap {
+    border-top: 1px solid var(--border);
+    padding: 14px 16px;
+    background: var(--bg-elevated);
+    display: flex; gap: 10px; align-items: flex-end;
+  }
+  .chat-input {
+    flex: 1;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--fg);
+    font-family: var(--mono); font-size: 13px;
+    padding: 10px 12px;
+    resize: none; min-height: 40px; max-height: 120px;
+    line-height: 1.5;
+    transition: all 0.15s;
+  }
+  .chat-input:focus {
+    outline: none; border-color: var(--accent-dim);
+    box-shadow: 0 0 0 2px rgba(230, 180, 80, 0.1);
+  }
+  .chat-input::placeholder { color: var(--fg-mute); }
+  .chat-input:disabled { opacity: 0.4; cursor: not-allowed; }
+  .send-btn {
+    padding: 0 18px; height: 40px;
+    border: 1px solid var(--accent-dim);
+    background: transparent; color: var(--accent);
+    font-family: var(--display); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    cursor: pointer; transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .send-btn:hover:not(:disabled) { background: var(--accent); color: var(--bg); box-shadow: 0 0 16px var(--accent-glow); }
+  .send-btn:disabled { opacity: 0.3; cursor: not-allowed; border-color: var(--border-bright); color: var(--fg-mute); }
+
+  .input-hint {
+    font-size: 10px; color: var(--fg-mute);
+    margin-top: 6px; letter-spacing: 0.05em;
+  }
+
+  /* 右栏 - 流日志 */
+  .log-panel { background: var(--bg-inset); }
+  .log-body { padding: 0; font-size: 11px; }
+
+  .log-entry {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(31, 38, 48, 0.5);
+    animation: log-in 0.2s ease;
+    word-break: break-all;
+  }
+  @keyframes log-in {
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .log-entry .log-time {
+    color: var(--fg-mute); font-size: 10px;
+    margin-right: 8px;
+  }
+  .log-entry .log-tag {
+    display: inline-block; padding: 1px 6px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; border-radius: 2px;
+    margin-right: 8px; vertical-align: middle;
+  }
+  .log-entry.req .log-tag { background: rgba(230, 180, 80, 0.15); color: var(--accent); }
+  .log-entry.res .log-tag { background: rgba(126, 198, 153, 0.15); color: var(--green); }
+  .log-stream .log-tag { background: rgba(86, 182, 194, 0.15); color: var(--cyan); }
+  .log-entry.err .log-tag { background: rgba(244, 112, 103, 0.15); color: var(--red); }
+  .log-entry.sys .log-tag { background: rgba(210, 168, 255, 0.15); color: var(--magenta); }
+  .log-entry .log-content {
+    color: var(--fg-dim); margin-top: 4px;
+    white-space: pre-wrap; font-size: 11px;
+  }
+  .log-entry .log-content .data-prefix { color: var(--fg-mute); }
+  .log-entry .log-content .data-text { color: var(--cyan); }
+  .log-entry .log-content .data-done { color: var(--accent); font-weight: 700; }
+
+  .log-empty {
+    padding: 30px 16px; text-align: center;
+    color: var(--fg-mute); font-size: 11px;
+    letter-spacing: 0.05em;
+  }
+
+  .clear-log {
+    margin-left: auto;
+    background: none; border: none;
+    color: var(--fg-mute); cursor: pointer;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 2px 6px;
+    transition: color 0.15s;
+  }
+  .clear-log:hover { color: var(--accent); }
+
+  /* 错误提示 */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    padding: 10px 18px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--red);
+    border-radius: 2px;
+    color: var(--red); font-size: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(244,112,103,0.2);
+    opacity: 0; pointer-events: none;
+    transition: all 0.3s;
+    z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 加载点 */
+  .thinking {
+    display: inline-flex; gap: 4px; align-items: center;
+  }
+  .thinking span {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--cyan);
+    animation: think 1.2s ease-in-out infinite;
+  }
+  .thinking span:nth-child(2) { animation-delay: 0.2s; }
+  .thinking span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes think {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1.2); }
+  }
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+
+<header class="topbar">
+  <div class="brand">haossh<span class="slash">//</span><span class="sub">debug console</span></div>
+  <div class="conn-id" id="connIdDisplay" style="display:none;">
+    <span class="label">session</span><span class="val" id="connIdVal">—</span>
+  </div>
+  <div class="status-pill">
+    <span class="status-dot" id="statusDot"></span>
+    <span class="status-text" id="statusText">disconnected</span>
+  </div>
+</header>
+
+<main class="app">
+  <!-- 左栏：连接管理 -->
+  <aside class="panel conn-panel">
+    <div class="panel-header">
+      <div class="panel-title"><span class="num">01</span>connect</div>
+    </div>
+    <div class="panel-body">
+      <div class="form-group">
+        <label class="form-label">host</label>
+        <input class="form-input" id="host" placeholder="192.168.1.10" value="">
+      </div>
+      <div class="form-group">
+        <label class="form-label">credentials</label>
+        <div class="form-row">
+          <input class="form-input" id="username" placeholder="root">
+          <input class="form-input" id="port" placeholder="22" value="22">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">password</label>
+        <input class="form-input" id="password" type="password" placeholder="••••••••">
+      </div>
+      <button class="btn" id="connectBtn"><span>↯ establish</span></button>
+      <button class="btn danger" id="disconnectBtn" style="margin-top:8px;" disabled><span>▢ terminate</span></button>
+
+      <div class="divider" data-label="session info"></div>
+      <div class="info-block" id="sessionInfo">
+        <div><span class="k">host:</span> <span class="v" id="info-host">—</span></div>
+        <div><span class="k">user:</span> <span class="v" id="info-user">—</span></div>
+        <div><span class="k">port:</span> <span class="v" id="info-port">—</span></div>
+        <div><span class="k">state:</span> <span class="v" id="info-state">idle</span></div>
+      </div>
+
+      <div class="divider" data-label="tools registered"></div>
+      <div class="info-block" style="font-size:11px;">
+        <div><span class="k">→</span> execute_command</div>
+        <div><span class="k">→</span> read_file</div>
+        <div><span class="k">→</span> write_file</div>
+        <div><span class="k">→</span> list_directory</div>
+        <div><span class="k">→</span> get_environment</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 中栏：对话 -->
+  <section class="panel chat-panel">
+    <div class="panel-header">
+      <div class="panel-title"><span class="num">02</span>conversation</div>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty-state" id="emptyState">
+        <div class="glyph">[ ]</div>
+        <div class="hint">建立 SSH 连接后，向运维 Agent 描述你的需求。Agent 会自主调用工具执行命令、读写文件、排查故障。</div>
+      </div>
+    </div>
+    <div class="chat-input-wrap">
+      <textarea class="chat-input" id="chatInput" placeholder="描述你的运维需求，例如：看一下磁盘使用情况" rows="1" disabled></textarea>
+      <button class="send-btn" id="sendBtn" disabled>send</button>
+    </div>
+  </section>
+
+  <!-- 右栏：流日志 -->
+  <aside class="panel log-panel">
+    <div class="panel-header">
+      <div class="panel-title"><span class="num">03</span>stream log</div>
+      <button class="clear-log" id="clearLog">clear</button>
+    </div>
+    <div class="panel-body log-body" id="logBody">
+      <div class="log-empty">等待事件流...</div>
+    </div>
+  </aside>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = location.origin + '/api/v1';
+const state = {
+  connectionId: null,
+  connected: false,
+  streaming: false,
+};
+
+const $ = id => document.getElementById(id);
+const el = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+
+function now() {
+  const d = new Date();
+  return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function setStatus(s) {
+  const dot = $('statusDot'), text = $('statusText');
+  dot.className = 'status-dot';
+  text.className = 'status-text';
+  if (s === 'connected') { dot.classList.add('connected'); text.classList.add('connected'); text.textContent = 'connected'; }
+  else if (s === 'connecting') { dot.classList.add('connecting'); text.classList.add('connecting'); text.textContent = 'connecting...'; }
+  else { text.textContent = 'disconnected'; }
+  $('info-state').textContent = s;
+}
+
+function log(tag, content, type = '') {
+  const body = $('logBody');
+  const empty = body.querySelector('.log-empty');
+  if (empty) empty.remove();
+
+  const entry = el('div', 'log-entry ' + (type || tag.toLowerCase()));
+  const time = el('span', 'log-time'); time.textContent = now();
+  const ttag = el('span', 'log-tag'); ttag.textContent = tag;
+  entry.appendChild(time); entry.appendChild(ttag);
+
+  if (content) {
+    const c = el('div', 'log-content');
+    if (tag === 'STREAM') {
+      c.innerHTML = '<span class="data-prefix">data: </span><span class="data-text"></span>';
+      c.querySelector('.data-text').textContent = content;
+    } else if (content === '[DONE]') {
+      c.innerHTML = '<span class="data-prefix">data: </span><span class="data-done">[DONE]</span>';
+    } else {
+      c.textContent = content;
+    }
+    entry.appendChild(c);
+  }
+  body.appendChild(entry);
+  body.scrollTop = body.scrollHeight;
+}
+
+$('clearLog').onclick = () => {
+  $('logBody').innerHTML = '<div class="log-empty">等待事件流...</div>';
+};
+
+// ── 连接管理 ─────────────────────────────────
+async function connect() {
+  const host = $('host').value.trim();
+  const port = parseInt($('port').value) || 22;
+  const username = $('username').value.trim();
+  const password = $('password').value;
+
+  if (!host || !username || !password) {
+    toast('请填写 host / username / password');
+    return;
+  }
+
+  setStatus('connecting');
+  $('connectBtn').disabled = true;
+  log('REQ', `POST /ssh/connect  host=${host}:${port} user=${username}`, 'req');
+
+  try {
+    const res = await fetch(`${API}/ssh/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, port, username, password }),
+    });
+    const data = await res.json();
+    if (data.code === '0000' && data.data && data.data.connectionId) {
+      state.connectionId = data.data.connectionId;
+      state.connected = true;
+      setStatus('connected');
+      $('connIdDisplay').style.display = '';
+      $('connIdVal').textContent = state.connectionId.slice(0, 12) + '...';
+      $('info-host').textContent = host;
+      $('info-user').textContent = username;
+      $('info-port').textContent = port;
+      $('connectBtn').disabled = false;
+      $('disconnectBtn').disabled = false;
+      $('chatInput').disabled = false;
+      $('sendBtn').disabled = false;
+      $('chatInput').focus();
+      log('RES', `connectionId=${state.connectionId}`, 'res');
+      log('SYS', 'SSH 连接已建立，工具已对 Agent 可见', 'sys');
+    } else {
+      throw new Error(data.info || '连接失败');
+    }
+  } catch (e) {
+    setStatus('disconnected');
+    $('connectBtn').disabled = false;
+    log('ERR', String(e.message || e), 'err');
+    toast('连接失败：' + (e.message || e));
+  }
+}
+
+async function disconnect() {
+  if (!state.connectionId) return;
+  log('REQ', `POST /ssh/disconnect?connectionId=${state.connectionId}`, 'req');
+  try {
+    await fetch(`${API}/ssh/disconnect?connectionId=${state.connectionId}`, { method: 'POST' });
+    log('RES', 'disconnected', 'res');
+  } catch (e) {
+    log('ERR', String(e), 'err');
+  }
+  resetConn();
+}
+
+function resetConn() {
+  state.connectionId = null;
+  state.connected = false;
+  setStatus('disconnected');
+  $('connIdDisplay').style.display = 'none';
+  $('connectBtn').disabled = false;
+  $('disconnectBtn').disabled = true;
+  $('chatInput').disabled = true;
+  $('sendBtn').disabled = true;
+  $('info-host').textContent = '—';
+  $('info-user').textContent = '—';
+  $('info-port').textContent = '—';
+}
+
+$('connectBtn').onclick = connect;
+$('disconnectBtn').onclick = disconnect;
+
+// ── 对话 ─────────────────────────────────────
+function appendMessage(role, text) {
+  $('emptyState')?.remove();
+  const msgs = $('messages');
+  const m = el('div', 'message ' + role);
+  const meta = el('div', 'message-meta');
+  const roleSpan = el('span', 'role'); roleSpan.textContent = role === 'user' ? 'YOU' : 'AGENT';
+  const timeSpan = el('span', 'time'); timeSpan.textContent = now();
+  meta.appendChild(roleSpan); meta.appendChild(timeSpan);
+  const bubble = el('div', 'message-bubble'); bubble.textContent = text;
+  m.appendChild(meta); m.appendChild(bubble);
+  msgs.appendChild(m);
+  msgs.scrollTop = msgs.scrollHeight;
+  return bubble;
+}
+
+async function sendMessage() {
+  const input = $('chatInput');
+  const text = input.value.trim();
+  if (!text || !state.connected || state.streaming) return;
+
+  appendMessage('user', text);
+  input.value = '';
+  input.style.height = 'auto';
+  state.streaming = true;
+  $('sendBtn').disabled = true;
+
+  const aiBubble = appendMessage('ai', '');
+  aiBubble.parentElement.classList.add('streaming');
+
+  log('REQ', `POST /chat_stream  message="${text.slice(0, 80)}${text.length > 80 ? '...' : ''}"`, 'req');
+
+  try {
+    const res = await fetch(`${API}/chat_stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: state.connectionId,
+        message: text,
+        terminal_session_id: null,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const payload = trimmed.slice(6);
+        if (payload === '[DONE]') {
+          log('STREAM', '[DONE]', 'res');
+          continue;
+        }
+        fullText += payload;
+        aiBubble.textContent = fullText;
+        log('STREAM', payload);
+        $('messages').scrollTop = $('messages').scrollHeight;
+      }
+    }
+
+    if (!fullText) aiBubble.textContent = '(空响应)';
+  } catch (e) {
+    aiBubble.textContent = '⚠ ' + (e.message || e);
+    log('ERR', String(e.message || e), 'err');
+    toast('请求失败：' + (e.message || e));
+  } finally {
+    aiBubble.parentElement.classList.remove('streaming');
+    state.streaming = false;
+    if (state.connected) $('sendBtn').disabled = false;
+    $('chatInput').focus();
+  }
+}
+
+$('sendBtn').onclick = sendMessage;
+$('chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+$('chatInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// 初始日志
+log('SYS', '调试控制台已就绪。填写左侧连接信息建立 SSH 会话。', 'sys');
+</script>
+</body>
+</html>
