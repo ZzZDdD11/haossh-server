@@ -9,22 +9,22 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0e14;
-    --bg-elevated: #11161d;
-    --bg-inset: #06090d;
-    --border: #1f2630;
-    --border-bright: #2d3744;
-    --fg: #c9d1d9;
-    --fg-dim: #6b7785;
-    --fg-mute: #4a5462;
-    --accent: #e6b450;          /* 琥珀金 - 主强调 */
-    --accent-dim: #8a6f30;
-    --accent-glow: rgba(230, 180, 80, 0.35);
-    --cyan: #56b6c2;            /* 青色 - AI */
-    --cyan-glow: rgba(86, 182, 194, 0.3);
-    --green: #7ec699;           /* 已连接 */
-    --red: #f47067;             /* 错误/断开 */
-    --magenta: #d2a8ff;         /* 工具/调试 */
+    --bg: #f7f4ed;             /* 暖米白 - 旧纸感 */
+    --bg-elevated: #ffffff;     /* 纯白卡片 */
+    --bg-inset: #ede8db;        /* 略深凹陷 */
+    --border: #d8d0bf;          /* 暖灰边框 */
+    --border-bright: #b8ad96;
+    --fg: #2b2316;              /* 深棕黑文字 */
+    --fg-dim: #6d5f4a;          /* 中棕 */
+    --fg-mute: #a0917a;         /* 浅棕 */
+    --accent: #a8701a;          /* 深琥珀 - 亮背景上更醒目 */
+    --accent-dim: #c9941f;
+    --accent-glow: rgba(168, 112, 26, 0.2);
+    --cyan: #0d7c8a;            /* 深青 - AI */
+    --cyan-glow: rgba(13, 124, 138, 0.15);
+    --green: #2d7a3e;           /* 深绿 - 已连接 */
+    --red: #b8312b;             /* 深红 - 错误 */
+    --magenta: #7d3c98;         /* 深紫 - 工具/调试 */
     --mono: 'JetBrains Mono', ui-monospace, monospace;
     --display: 'Space Mono', var(--mono);
   }
@@ -39,8 +39,8 @@
     color: var(--fg);
     background: var(--bg);
     background-image:
-      linear-gradient(rgba(230,180,80,0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(230,180,80,0.025) 1px, transparent 1px);
+      linear-gradient(rgba(168, 112, 26, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(168, 112, 26, 0.05) 1px, transparent 1px);
     background-size: 32px 32px;
     background-position: -1px -1px;
     line-height: 1.5;
@@ -52,7 +52,7 @@
     position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 100;
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
     animation: scan 8s linear infinite;
-    opacity: 0.5;
+    opacity: 0.3;
     pointer-events: none;
   }
   @keyframes scan {
@@ -80,7 +80,7 @@
     font-size: 14px;
     letter-spacing: 0.05em;
     color: var(--accent);
-    text-shadow: 0 0 12px var(--accent-glow);
+    text-shadow: none;
   }
   .brand .slash { color: var(--fg-mute); margin: 0 4px; }
   .brand .sub { color: var(--fg-dim); font-weight: 400; }
@@ -104,12 +104,12 @@
   .status-dot.connected { background: var(--green); animation: pulse-green 2s ease-in-out infinite; }
   .status-dot.connecting { background: var(--accent); animation: pulse-amber 1s ease-in-out infinite; }
   @keyframes pulse-green {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(126, 198, 153, 0.6); }
-    50% { box-shadow: 0 0 0 6px rgba(126, 198, 153, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(45, 122, 62, 0.6); }
+    50% { box-shadow: 0 0 0 6px rgba(45, 122, 62, 0); }
   }
   @keyframes pulse-amber {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(230, 180, 80, 0.6); }
-    50% { box-shadow: 0 0 0 6px rgba(230, 180, 80, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(168, 112, 26, 0.6); }
+    50% { box-shadow: 0 0 0 6px rgba(168, 112, 26, 0); }
   }
   .status-text { color: var(--fg-dim); }
   .status-text.connected { color: var(--green); }
@@ -182,7 +182,7 @@
   .form-input:focus {
     outline: none;
     border-color: var(--accent-dim);
-    box-shadow: 0 0 0 2px rgba(230, 180, 80, 0.1);
+    box-shadow: 0 0 0 2px rgba(168, 112, 26, 0.1);
   }
   .form-input::placeholder { color: var(--fg-mute); }
   .form-row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; }
@@ -212,8 +212,8 @@
   .btn span { position: relative; z-index: 1; }
   .btn:disabled { opacity: 0.3; cursor: not-allowed; border-color: var(--border-bright); color: var(--fg-mute); }
 
-  .btn.danger { border-color: rgba(244, 112, 103, 0.4); color: var(--red); }
-  .btn.danger:hover:not(:disabled) { background: var(--red); color: var(--bg); box-shadow: 0 0 16px rgba(244,112,103,0.3); }
+  .btn.danger { border-color: rgba(184, 49, 43, 0.4); color: var(--red); }
+  .btn.danger:hover:not(:disabled) { background: var(--red); color: var(--bg); box-shadow: 0 0 16px rgba(184, 49, 43,0.3); }
   .btn.danger:hover:not(:disabled)::before { background: var(--red); }
 
   .divider {
@@ -276,13 +276,13 @@
     word-break: break-word;
   }
   .message.user .message-bubble {
-    border-color: rgba(230, 180, 80, 0.3);
-    background: rgba(230, 180, 80, 0.04);
+    border-color: rgba(168, 112, 26, 0.3);
+    background: rgba(168, 112, 26, 0.04);
     margin-left: auto;
   }
   .message.ai .message-bubble {
-    border-color: rgba(86, 182, 194, 0.3);
-    background: rgba(86, 182, 194, 0.04);
+    border-color: rgba(13, 124, 138, 0.3);
+    background: rgba(13, 124, 138, 0.04);
   }
   .message.ai.streaming .message-bubble::after {
     content: '▋'; color: var(--cyan);
@@ -325,7 +325,7 @@
   }
   .chat-input:focus {
     outline: none; border-color: var(--accent-dim);
-    box-shadow: 0 0 0 2px rgba(230, 180, 80, 0.1);
+    box-shadow: 0 0 0 2px rgba(168, 112, 26, 0.1);
   }
   .chat-input::placeholder { color: var(--fg-mute); }
   .chat-input:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -352,7 +352,7 @@
 
   .log-entry {
     padding: 8px 14px;
-    border-bottom: 1px solid rgba(31, 38, 48, 0.5);
+    border-bottom: 1px solid rgba(216, 208, 191, 0.5);
     animation: log-in 0.2s ease;
     word-break: break-all;
   }
@@ -370,11 +370,11 @@
     text-transform: uppercase; border-radius: 2px;
     margin-right: 8px; vertical-align: middle;
   }
-  .log-entry.req .log-tag { background: rgba(230, 180, 80, 0.15); color: var(--accent); }
-  .log-entry.res .log-tag { background: rgba(126, 198, 153, 0.15); color: var(--green); }
-  .log-stream .log-tag { background: rgba(86, 182, 194, 0.15); color: var(--cyan); }
-  .log-entry.err .log-tag { background: rgba(244, 112, 103, 0.15); color: var(--red); }
-  .log-entry.sys .log-tag { background: rgba(210, 168, 255, 0.15); color: var(--magenta); }
+  .log-entry.req .log-tag { background: rgba(168, 112, 26, 0.15); color: var(--accent); }
+  .log-entry.res .log-tag { background: rgba(45, 122, 62, 0.15); color: var(--green); }
+  .log-stream .log-tag { background: rgba(13, 124, 138, 0.15); color: var(--cyan); }
+  .log-entry.err .log-tag { background: rgba(184, 49, 43, 0.15); color: var(--red); }
+  .log-entry.sys .log-tag { background: rgba(125, 60, 152, 0.15); color: var(--magenta); }
   .log-entry .log-content {
     color: var(--fg-dim); margin-top: 4px;
     white-space: pre-wrap; font-size: 11px;
@@ -409,7 +409,7 @@
     border: 1px solid var(--red);
     border-radius: 2px;
     color: var(--red); font-size: 12px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(244,112,103,0.2);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12), 0 0 16px rgba(184, 49, 43,0.15);
     opacity: 0; pointer-events: none;
     transition: all 0.3s;
     z-index: 200;
@@ -437,7 +437,7 @@
     margin-bottom: 10px;
     padding: 8px 10px;
     border-left: 2px solid var(--magenta);
-    background: rgba(210, 168, 255, 0.05);
+    background: rgba(125, 60, 152, 0.05);
     border-radius: 0 2px 2px 0;
     font-size: 11px;
   }
@@ -465,7 +465,7 @@
   }
   .tool-card-header {
     padding: 6px 10px;
-    background: rgba(230, 180, 80, 0.08);
+    background: rgba(168, 112, 26, 0.08);
     display: flex; align-items: center; gap: 8px;
     font-family: var(--display);
     font-size: 10px; letter-spacing: 0.05em;
