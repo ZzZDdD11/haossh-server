@@ -2,8 +2,10 @@ import os
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models.openai import OpenAIChatModel
 
+from haossh.agent.context import trim_history
 from haossh.agent.deps import AgentDeps
 from haossh.agent.tools import tools
 from haossh.config import settings
@@ -24,4 +26,8 @@ agent = Agent(
     system_prompt=SYSTEM_PROMPT,
     tools=tools,
     deps_type=AgentDeps,
+    capabilities=[
+        # 上下文管理：框架在传 LLM 前自动裁剪历史，防超 context window
+        ProcessHistory(processor=trim_history),
+    ],
 )
