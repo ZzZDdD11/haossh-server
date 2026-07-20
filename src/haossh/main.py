@@ -2,6 +2,12 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# 应用日志配置：必须在其他模块 import 之前，确保所有 logger 都能输出 INFO
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+
 from fastapi import FastAPI, APIRouter
 from fastapi.staticfiles import StaticFiles
 

@@ -584,12 +584,12 @@
     <div class="messages" id="messages">
       <div class="empty-state" id="emptyState">
         <div class="glyph">[ ]</div>
-        <div class="hint">建立 SSH 连接后，向运维 Agent 描述你的需求。Agent 会自主调用工具执行命令、读写文件、排查故障。</div>
+        <div class="hint">向运维 Agent 描述你的需求。连接 SSH 后可直接执行命令；未连接时可咨询运维问题。</div>
       </div>
     </div>
     <div class="chat-input-wrap">
-      <textarea class="chat-input" id="chatInput" placeholder="描述你的运维需求，例如：看一下磁盘使用情况" rows="1" disabled></textarea>
-      <button class="send-btn" id="sendBtn" disabled>send</button>
+      <textarea class="chat-input" id="chatInput" placeholder="描述你的运维需求，例如：看一下磁盘使用情况" rows="1"></textarea>
+      <button class="send-btn" id="sendBtn">send</button>
     </div>
   </section>
 
@@ -740,8 +740,6 @@ function resetConn() {
   $('connIdDisplay').style.display = 'none';
   $('connectBtn').disabled = false;
   $('disconnectBtn').disabled = true;
-  $('chatInput').disabled = true;
-  $('sendBtn').disabled = true;
   $('info-host').textContent = '—';
   $('info-user').textContent = '—';
   $('info-port').textContent = '—';
@@ -784,7 +782,7 @@ function createAiMessage() {
 async function sendMessage() {
   const input = $('chatInput');
   const text = input.value.trim();
-  if (!text || !state.connected || state.streaming) return;
+  if (!text || state.streaming) return;
 
   appendMessage('user', text);
   input.value = '';
@@ -829,7 +827,7 @@ async function sendMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        session_id: state.connectionId,
+        session_id: state.connectionId || '',
         conversation_id: state.conversationId,
         message: text,
         terminal_session_id: null,
@@ -934,7 +932,7 @@ async function sendMessage() {
   } finally {
     m.classList.remove('streaming');
     state.streaming = false;
-    if (state.connected) $('sendBtn').disabled = false;
+    $('sendBtn').disabled = false;
     $('chatInput').focus();
   }
 }

@@ -55,3 +55,6 @@ __pycache__/
 # 数据库（SQLite 本地文件）
 *.db
 *.db-journal
+
+/log
+*.log/log/
