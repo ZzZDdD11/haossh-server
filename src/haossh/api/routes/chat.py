@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -8,14 +9,12 @@ from pydantic_ai import Agent
 from haossh.agent import agent
 from haossh.agent.deps import AgentDeps
 from haossh.api.schemas.chat import ChatRequest
+from haossh.db import repo_conversation
+from haossh.db.models import Conversation
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# 对话历史存储：session_id → 消息列表
-# 内存存储，服务重启丢失；Phase 5 迁移到数据库
-histories: dict[str, list] = {}
 
 
 def _sse(payload: dict) -> str:
@@ -97,12 +96,23 @@ async def chat_stream(req: ChatRequest):
         terminal_session_id=req.terminal_session_id,
         allow_sudo=True,
     )
+
     async def generator():
-        # 取本会话的历史消息（多轮记忆）
-        history = histories.get(req.session_id, [])
+        # 确定对话 ID：传了就复用，没传就新建
+        if req.conversation_id:
+            conv_id = req.conversation_id
+            history = await repo_conversation.get_messages(conv_id)
+        else:
+            conv = Conversation(
+                id=uuid.uuid4().hex,
+                connection_id=req.session_id or None,
+            )
+            await repo_conversation.create_conversation(conv)
+            conv_id = conv.id
+            history = []
+
         try:
             # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
-            # （包括工具调用/结果事件，run_stream 的 stream_text 只给文本）
             # message_history 传入历史，Agent 才能记得之前聊过什么
             async with agent.iter(req.message, deps=deps, message_history=history) as run:
                 async for node in run:
@@ -114,12 +124,13 @@ async def chat_stream(req: ChatRequest):
                                 payload = _event_to_payload(event)
                                 if payload is not None:
                                     yield _sse(payload)
-            # with 块结束后 run 才完成，此时存累积消息（历史+本轮）
-            histories[req.session_id] = run.all_messages()
+            # 存本轮新增消息（增量追加，不覆盖）
+            await repo_conversation.append_messages(conv_id, run.new_messages())
         except Exception as e:
-            logger.exception("chat_stream 执行异常 session_id=%s", req.session_id)
+            logger.exception("chat_stream 执行异常 conversation_id=%s", conv_id)
             yield _sse({"type": "error", "message": str(e)})
-        yield _sse({"type": "done"})
+        # done 事件带上 conversation_id，前端后续请求带上即可续聊
+        yield _sse({"type": "done", "conversation_id": conv_id})
 
     return StreamingResponse(
         generator(),

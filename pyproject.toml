@@ -18,19 +18,15 @@ dependencies = [
     "structlog>=24.0.0",
     # Utils
     "httpx>=0.28.0",
-    # Phase 2+
-    # "langgraph>=0.2.0",
-    # "langchain>=0.3.0",
-    # "langchain-openai>=0.3.0",
-    # Phase 3+
-    # "sqlalchemy[asyncio]>=2.0.0",
-    # "asyncmy>=0.2.0",
-    # Phase 4+
-    # "mcp>=1.0.0",
+    # Phase 3: 数据持久化
+    "sqlmodel>=0.0.22",
+    "aiosqlite>=0.20.0",
+    # Agent
     "python-multipart>=0.0.32",
     "langgraph>=1.2.9",
     "pydantic-ai>=2.13.0",
     "pydantic-evals[logfire]>=2.13.0",
+    "greenlet>=3.5.3",
 ]
 
 [project.optional-dependencies]

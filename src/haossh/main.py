@@ -1,16 +1,28 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, APIRouter
 from fastapi.staticfiles import StaticFiles
 
 from haossh.api.routes import chat, ssh_connection, ssh_file, ssh_terminal, terminal_binding
+from haossh.db import engine, init_db
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时建表，关闭时释放连接池。"""
+    await init_db()
+    yield
+    await engine.dispose()
+
 
 app = FastAPI(
     title="haossh-server",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 router = APIRouter(prefix="/api")

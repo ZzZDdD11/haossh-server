@@ -50,3 +50,8 @@ __pycache__/
 *.pyc
 .env
 .claude/
+.codebuddy/
+
+# 数据库（SQLite 本地文件）
+*.db
+*.db-journal

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class CreateConnectionRequest(BaseModel):
     """创建 / 更新连接请求（与前端 SshConnectionPayload 对齐）。"""
-    connection_id: str | None = Field(default=None)
+    connection_id: str | None = Field(default=None, alias="connectionId")
     connection_name: str = Field(..., alias="connectionName")
     host: str
     port: int = 22

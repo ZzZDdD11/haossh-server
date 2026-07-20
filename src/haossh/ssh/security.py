@@ -1,4 +1,4 @@
-"""AES-256-GCM 密码加解密。
+"""AES-256-GCM 加解密（密码/私钥等敏感信息）。
 
 加密流程：明文 → AES-256-GCM → nonce + 密文 → base64 → 存数据库
 解密流程：数据库 → base64 解码 → 拆分 nonce + 密文 → AES-256-GCM → 明文
@@ -28,11 +28,11 @@ def _get_key() -> bytes:
     return base64.b64decode(key_str)
 
 
-def encrypt_password(password: str) -> str:
-    """加密明文密码，返回 base64 编码的密文（可直接存数据库）。
+def encrypt(plaintext: str) -> str:
+    """加密明文（密码/私钥），返回 base64 编码的密文（可直接存数据库）。
 
     Args:
-        password: 明文密码
+        plaintext: 明文内容
 
     Returns:
         base64 编码字符串，包含 nonce + 密文
@@ -40,21 +40,21 @@ def encrypt_password(password: str) -> str:
     key = _get_key()
     aesgcm = AESGCM(key)
     nonce = os.urandom(12)  # 12 字节随机数，每次加密都不同
-    ciphertext = aesgcm.encrypt(nonce, password.encode("utf-8"), None)
+    ciphertext = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
 
     # 存储格式：nonce(12字节) + 密文(变长)，再 base64
     combined = nonce + ciphertext
     return base64.b64encode(combined).decode("utf-8")
 
 
-def decrypt_password(encrypted: str) -> str:
-    """解密密文，返回明文密码。
+def decrypt(encrypted: str) -> str:
+    """解密密文，返回明文。
 
     Args:
-        encrypted: encrypt_password 产出的 base64 字符串
+        encrypted: encrypt 产出的 base64 字符串
 
     Returns:
-        明文密码
+        明文内容
 
     Raises:
         Exception: 密钥不匹配或数据损坏时解密失败

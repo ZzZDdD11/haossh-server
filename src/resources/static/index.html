@@ -611,6 +611,7 @@
 const API = location.origin + '/api/v1';
 const state = {
   connectionId: null,
+  conversationId: null,
   connected: false,
   streaming: false,
 };
@@ -829,6 +830,7 @@ async function sendMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: state.connectionId,
+        conversation_id: state.conversationId,
         message: text,
         terminal_session_id: null,
       }),
@@ -909,6 +911,7 @@ async function sendMessage() {
           }
           log('TOOL', `${evt.tool} → ${(evt.result || '').slice(0, 100)}`, ok ? 'res' : 'err');
         } else if (evt.type === 'done') {
+          if (evt.conversation_id) state.conversationId = evt.conversation_id;
           log('STREAM', '[DONE]', 'res');
         } else if (evt.type === 'error') {
           ensureText().textContent += '⚠ ' + evt.message;
