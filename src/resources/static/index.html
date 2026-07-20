@@ -432,6 +432,11 @@
     40% { opacity: 1; transform: scale(1.2); }
   }
 
+  /* 折叠组件（details/summary）全局样式 - 默认折叠，点击展开 */
+  summary { list-style: none; cursor: pointer; user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary:hover { filter: brightness(1.15); }
+
   /* 思考过程块 */
   .thinking-block {
     margin-bottom: 10px;
@@ -806,8 +811,8 @@ async function sendMessage() {
   };
   const ensureThink = () => {
     if (!currentThink) {
-      currentThink = el('div', 'thinking-block');
-      const lbl = el('div', 'thinking-label'); lbl.textContent = 'thinking';
+      currentThink = el('details', 'thinking-block');
+      const lbl = el('summary', 'thinking-label'); lbl.textContent = 'thinking';
       const c = el('div', 'thinking-content');
       currentThink.appendChild(lbl); currentThink.appendChild(c);
       currentThink._c = c;
@@ -861,8 +866,8 @@ async function sendMessage() {
           log('STREAM', `think: ${evt.delta.slice(0, 40)}`);
         } else if (evt.type === 'tool_call') {
           // 工具调用卡片
-          const card = el('div', 'tool-card');
-          const hdr = el('div', 'tool-card-header');
+          const card = el('details', 'tool-card');
+          const hdr = el('summary', 'tool-card-header');
           hdr.innerHTML = `<span class="tool-icon">▶</span><span class="tool-name">${evt.tool}</span><span class="tool-status running">running</span>`;
           const body = el('div', 'tool-card-body');
           const sec = el('div', 'tool-card-section');
@@ -890,8 +895,8 @@ async function sendMessage() {
             sec.appendChild(v); body.appendChild(sec);
           } else {
             // 无对应 call 卡片，单独建结果卡片
-            const c2 = el('div', 'tool-card');
-            const h2 = el('div', 'tool-card-header');
+            const c2 = el('details', 'tool-card');
+            const h2 = el('summary', 'tool-card-header');
             h2.innerHTML = `<span class="tool-icon">◀</span><span class="tool-name">${evt.tool}</span><span class="tool-status ${ok ? 'done' : 'failed'}">${evt.outcome}</span>`;
             const b2 = el('div', 'tool-card-body');
             const s2 = el('div', 'tool-card-section');
