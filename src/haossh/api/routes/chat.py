@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
 
 from haossh.agent import agent
 from haossh.agent.deps import AgentDeps
@@ -102,6 +103,7 @@ async def chat_stream(req: ChatRequest):
         if req.conversation_id:
             conv_id = req.conversation_id
             history = await repo_conversation.get_messages(conv_id)
+            logger.info("续聊 conversation_id=%s 历史消息数=%d", conv_id[:12], len(history))
         else:
             conv = Conversation(
                 id=uuid.uuid4().hex,
@@ -110,11 +112,17 @@ async def chat_stream(req: ChatRequest):
             await repo_conversation.create_conversation(conv)
             conv_id = conv.id
             history = []
+            logger.info("新建对话 conversation_id=%s session_id=%s", conv_id[:12], req.session_id[:12] if req.session_id else '空')
 
         try:
             # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
             # message_history 传入历史，Agent 才能记得之前聊过什么
-            async with agent.iter(req.message, deps=deps, message_history=history) as run:
+            async with agent.iter(
+                req.message,
+                deps=deps,
+                message_history=history,
+                usage_limits=UsageLimits(request_limit=200),
+            ) as run:
                 async for node in run:
                     # ModelRequestNode: 模型流式响应（text/thinking 片段）
                     # CallToolsNode:    工具调用执行（tool_call/tool_result）

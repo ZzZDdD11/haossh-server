@@ -14,4 +14,4 @@ class AgentDeps:
     session_id: str                          # SSH 连接 ID
     terminal_session_id: str | None = None   # 可选的 PTY 会话（未来用）
     allow_sudo: bool = True                  # 权限控制：是否允许 sudo
-    max_command_timeout: int = 60            # 限制单命令最长执行时间
+    max_command_timeout: int = 300           # 限制单命令最长执行时间

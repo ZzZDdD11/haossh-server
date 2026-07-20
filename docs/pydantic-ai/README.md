@@ -12,6 +12,7 @@
 | [03-multi-turn-context.md](./03-multi-turn-context.md) | 多轮对话与上下文管理 | ⏳ 多轮已实现，上下文管理待做 |
 | [04-advanced-ecosystem.md](./04-advanced-ecosystem.md) | 高级特性与生态 | ❌ 多数未用 |
 | [05-dynamic-system-prompt.md](./05-dynamic-system-prompt.md) | 动态 System Prompt（含 `dynamic=True` 踩坑） | ✅ 已用（权限+连接状态） |
+| [06-production-pitfalls.md](./06-production-pitfalls.md) | 生产环境踩坑实录（超时/裁剪/request_limit） | ✅ 已用 |
 
 ## 学习路径
 
@@ -25,6 +26,8 @@
 04 高级特性（按需深入：结构化输出/Capabilities/Harness/Evals）
   ↓
 05 动态 System Prompt（dynamic=True 踩坑实录）
+  ↓
+06 生产环境踩坑实录（超时体系/后台执行/裁剪策略/request_limit）
 ```
 
 ## 与本项目对照总表

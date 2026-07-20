@@ -179,6 +179,22 @@ async def connect(req: ConnectRequest = None, connectionId: str = Query(default=
         password=password,
     )
     if ok:
+        # 表单值连接成功后自动保存到 DB，下次刷新页面可从历史记录一键连接
+        if not connectionId:
+            existing = await repo_connection.get(cid)
+            if not existing:
+                conn = SSHConnection(
+                    id=cid,
+                    user_id="default",
+                    name=f"{username}@{host}",
+                    host=host,
+                    port=port,
+                    username=username,
+                    auth_type=1,
+                    secret_enc=encrypt(password),
+                )
+                await repo_connection.create(conn)
+                logger.info("连接信息已自动保存 connection_id=%s host=%s", cid, host)
         return _ok({"connectionId": cid})
     return _err("SSH 连接失败，请检查主机地址和认证信息")
 

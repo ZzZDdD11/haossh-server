@@ -9,6 +9,8 @@ deps 由路由层在 agent.run_stream(deps=...) 时注入，LLM 看不到。
 import asyncio
 import logging
 import re
+import shlex
+import uuid
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.exceptions import ModelRetry
@@ -48,12 +50,13 @@ def _check_forbidden(command: str) -> str | None:
 async def execute_command(
     ctx: RunContext[AgentDeps],
     command: str,
-    timeout: int = 30,
+    timeout: int = 120,
 ) -> str:
     """在远程服务器上执行单条 shell 命令（非交互式）。
 
-    适用于：系统信息查询、服务管理、软件安装、日志查看、网络排障、Docker 运维等。
+    适用于：系统信息查询、服务管理、日志查看、网络排障等快速命令（通常 30 秒内完成）。
     不适用于需要交互输入的场景（如 top、vim、ssh 二次确认），请改用终端会话。
+    长时间命令（uv sync、apt install、docker build、git clone 等可能超过 30 秒）请改用 run_background 后台执行。
 
     遇到 Permission denied 时，对系统管理类操作应主动加 sudo 重试。
 
@@ -84,6 +87,10 @@ async def execute_command(
             command=command,
             timeout=timeout,
         )
+    except asyncio.TimeoutError:
+        raise ModelRetry(
+            f"命令执行超时（{timeout}秒）。长时间命令请改用 run_background 后台执行，再用 check_task 轮询。"
+        ) from None
     except Exception as e:
         logger.warning(
             "命令执行失败 session_id=%s command=%s error=%s",
@@ -233,6 +240,114 @@ async def get_environment(ctx: RunContext[AgentDeps]) -> str:
     return "\n".join(parts)
 
 
+# ── run_background / check_task（后台执行 + 轮询）──────────────
+
+# 后台任务映射：task_id → {pid, log_file, command}
+# 进程级内存存储，服务重启丢失（后台任务本身也会随重启终止）
+_background_tasks: dict[str, dict] = {}
+
+
+async def run_background(
+    ctx: RunContext[AgentDeps],
+    command: str,
+) -> str:
+    """后台执行长时间命令（非阻塞），返回任务ID用于轮询。
+
+    适用于可能超过 30 秒的命令：uv sync、apt install、docker build、git clone 等。
+    命令在远程服务器后台运行（nohup），不受 SSH 超时或断开影响。
+    执行后用 check_task 轮询状态和输出，直到任务完成。
+
+    Args:
+        command: 要后台执行的 shell 命令，如 "uv sync"、"apt install -y nginx"。
+    """
+    # 1. 危险命令拦截
+    forbidden = _check_forbidden(command)
+    if forbidden:
+        return forbidden
+
+    # 2. 生成 task_id 和日志路径
+    task_id = uuid.uuid4().hex[:8]
+    log_file = f"/tmp/haossh_bg_{task_id}.log"
+
+    # 3. 后台执行：nohup 让命令不受 SSH 断开影响，& 让命令在后台运行
+    #    shlex.quote 防止命令里的特殊字符破坏 shell 语法
+    full_command = f"nohup bash -c {shlex.quote(command)} > {log_file} 2>&1 & echo $!"
+    try:
+        stdout, stderr, exit_status = await terminal.exec_command(
+            connection_id=ctx.deps.session_id,
+            command=full_command,
+            timeout=10,
+        )
+    except Exception as e:
+        raise ModelRetry(f"启动后台任务失败: {e}") from e
+
+    # 4. 解析 PID（echo $! 输出在最后一行）
+    pid = stdout.strip().split("\n")[-1].strip()
+    if not pid.isdigit():
+        raise ModelRetry(f"无法获取后台任务 PID，stdout={stdout!r}")
+
+    # 5. 记录任务
+    _background_tasks[task_id] = {
+        "pid": pid,
+        "log_file": log_file,
+        "command": command,
+    }
+
+    logger.info("后台任务已启动 task_id=%s pid=%s command=%s", task_id, pid, command[:80])
+    return (
+        f"后台任务已启动\n"
+        f"[task_id={task_id}] [pid={pid}]\n"
+        f"命令: {command}\n"
+        f"用 check_task(task_id=\"{task_id}\") 查询状态和输出。"
+    )
+
+
+async def check_task(
+    ctx: RunContext[AgentDeps],
+    task_id: str,
+) -> str:
+    """查询后台任务的运行状态和最近输出。
+
+    配合 run_background 使用：启动任务后反复调用此工具轮询，直到状态为 done。
+    每次返回最近 30 行输出，可观察进度。
+
+    Args:
+        task_id: run_background 返回的任务ID。
+    """
+    task = _background_tasks.get(task_id)
+    if not task:
+        return f"任务不存在: {task_id}。可能已过期或 task_id 错误。"
+
+    pid = task["pid"]
+    log_file = task["log_file"]
+
+    # 检查进程状态 + 读日志尾部
+    # ps -p 返回 0 表示进程存在（running），非 0 表示已结束（done）
+    check_command = (
+        f"ps -p {pid} -o pid= 2>/dev/null && echo '__RUNNING__' || echo '__DONE__';"
+        f"echo '===LOG===';"
+        f"tail -30 {log_file}"
+    )
+    try:
+        stdout, stderr, exit_status = await terminal.exec_command(
+            connection_id=ctx.deps.session_id,
+            command=check_command,
+            timeout=10,
+        )
+    except Exception as e:
+        raise ModelRetry(f"查询任务状态失败: {e}") from e
+
+    # 解析状态
+    is_running = "__RUNNING__" in stdout
+    status = "running" if is_running else "done"
+
+    # 提取日志部分
+    log_parts = stdout.split("===LOG===")
+    log_output = log_parts[1].strip() if len(log_parts) > 1 else "(无输出)"
+
+    return f"[{status}] task_id={task_id} pid={pid}\n{log_output}"
+
+
 # ── prepare 钩子 ─────────────────────────────────────────────
 
 async def require_connection(
@@ -256,8 +371,8 @@ tools: list[Tool] = [
     Tool(
         execute_command,
         prepare=require_connection,
-        max_retries=1,
-        timeout=60.0,
+        max_retries=2,
+        timeout=300.0,
     ),
     Tool(
         read_file,
@@ -278,6 +393,18 @@ tools: list[Tool] = [
         get_environment,
         prepare=require_connection,
         max_retries=1,
+        timeout=30.0,
+    ),
+    Tool(
+        run_background,
+        prepare=require_connection,
+        max_retries=1,
+        timeout=30.0,
+    ),
+    Tool(
+        check_task,
+        prepare=require_connection,
+        max_retries=2,
         timeout=30.0,
     ),
 ]

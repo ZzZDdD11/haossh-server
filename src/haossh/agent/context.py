@@ -6,32 +6,33 @@
 
 import logging
 
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 logger = logging.getLogger(__name__)
 
-# 保留最近 N 条消息（约 10 轮对话，每轮约 4 条：user/agent+toolcall/toolresult/final）
-MAX_HISTORY_MESSAGES = 40
+# 保留最近 N 条消息。工具调用多的场景每轮用户对话可能产生 10+ 条
+# （user → thinking → tool_call → tool_return → ... → final_text），N 需要够大
+MAX_HISTORY_MESSAGES = 100
 
 
 def trim_history(history: list[ModelMessage]) -> list[ModelMessage]:
-    """滑动窗口裁剪：只保留最近 N 条，对齐到用户消息边界。
+    """滑动窗口裁剪：只保留最近 N 条，对齐到 ModelResponse 边界。
 
-    为什么对齐用户消息边界：不能切断"工具调用→工具返回"配对，
-    否则 LLM 会看到孤立的工具结果（没有对应调用）而困惑。
-    每轮对话从用户消息开始，从用户消息边界切最安全。
+    为什么对齐 ModelResponse 而非 user-prompt：
+    工具配对是 [ModelResponse(tool-call), ModelRequest(tool-return)]。
+    从 ModelResponse 开始可保证配对完整，不会出现孤立的 tool-return。
+    对齐 user-prompt 太激进——工具调用多时会把大部分历史裁掉。
     """
+    logger.info("trim_history 输入: %d 条", len(history))
     if len(history) <= MAX_HISTORY_MESSAGES:
+        logger.info("trim_history 无需裁剪，返回 %d 条", len(history))
         return history
 
     trimmed = history[-MAX_HISTORY_MESSAGES:]
-    # 找第一个含 UserPromptPart 的 ModelRequest 作为起点
+    # 找第一个 ModelResponse 作为起点（保证 tool-call → tool-return 配对完整）
     for i, msg in enumerate(trimmed):
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if getattr(part, "part_kind", None) == "user-prompt":
-                    logger.debug(
-                        "裁剪历史: %d -> %d 条", len(history), len(trimmed) - i
-                    )
-                    return trimmed[i:]
+        if isinstance(msg, ModelResponse):
+            logger.info("trim_history 裁剪: %d -> %d 条", len(history), len(trimmed) - i)
+            return trimmed[i:]
+    logger.info("trim_history 裁剪(未找到ModelResponse边界): %d -> %d 条", len(history), len(trimmed))
     return trimmed

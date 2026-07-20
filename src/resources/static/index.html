@@ -539,6 +539,12 @@
       <div class="panel-title"><span class="num">01</span>connect</div>
     </div>
     <div class="panel-body">
+      <div class="form-group" id="savedConnectionsGroup" style="display:none;">
+        <label class="form-label">saved connections</label>
+        <select class="form-input" id="savedConnections">
+          <option value="">— select saved —</option>
+        </select>
+      </div>
       <div class="form-group">
         <label class="form-label">host</label>
         <input class="form-input" id="host" placeholder="192.168.1.10" value="">
@@ -612,6 +618,7 @@ const API = location.origin + '/api/v1';
 const state = {
   connectionId: null,
   conversationId: null,
+  savedConnectionId: null,
   connected: false,
   streaming: false,
 };
@@ -671,8 +678,82 @@ $('clearLog').onclick = () => {
   $('logBody').innerHTML = '<div class="log-empty">等待事件流...</div>';
 };
 
+// ── 历史连接 ─────────────────────────────────
+let _savedConnections = [];
+
+async function loadConnections() {
+  try {
+    const res = await fetch(`${API}/ssh/connection_list?userId=default`);
+    const data = await res.json();
+    if (data.code === '0000' && data.data && data.data.length > 0) {
+      _savedConnections = data.data;
+      const sel = $('savedConnections');
+      data.data.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.connectionId;
+        opt.textContent = `${c.connectionName} (${c.host})`;
+        sel.appendChild(opt);
+      });
+      $('savedConnectionsGroup').style.display = '';
+    }
+  } catch (e) { /* 静默失败，不影响手动填写 */ }
+}
+
+$('savedConnections').onchange = function() {
+  const cid = this.value;
+  state.savedConnectionId = cid || null;
+  if (cid) {
+    const conn = _savedConnections.find(c => c.connectionId === cid);
+    if (conn) {
+      $('host').value = conn.host;
+      $('port').value = conn.port;
+      $('username').value = conn.username;
+      $('password').value = '';
+      $('password').placeholder = '已保存，无需重填';
+    }
+  }
+};
+
 // ── 连接管理 ─────────────────────────────────
 async function connect() {
+  // 选了历史连接且密码为空 → 用 connectionId 连接（后端从 DB 读密码）
+  if (state.savedConnectionId && !$('password').value) {
+    const conn = _savedConnections.find(c => c.connectionId === state.savedConnectionId);
+    const host = conn ? conn.host : '';
+    const username = conn ? conn.username : '';
+    const port = conn ? conn.port : 22;
+    setStatus('connecting');
+    $('connectBtn').disabled = true;
+    log('REQ', `POST /ssh/connect?connectionId=${state.savedConnectionId}`, 'req');
+    try {
+      const res = await fetch(`${API}/ssh/connect?connectionId=${state.savedConnectionId}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.code === '0000' && data.data && data.data.connectionId) {
+        state.connectionId = data.data.connectionId;
+        state.connected = true;
+        setStatus('connected');
+        $('connIdDisplay').style.display = '';
+        $('connIdVal').textContent = state.connectionId.slice(0, 12) + '...';
+        $('info-host').textContent = host;
+        $('info-user').textContent = username;
+        $('info-port').textContent = port;
+        $('connectBtn').disabled = false;
+        $('disconnectBtn').disabled = false;
+        $('chatInput').focus();
+        log('RES', `connectionId=${state.connectionId}`, 'res');
+        log('SYS', 'SSH 连接已建立（从历史记录）', 'sys');
+      } else {
+        throw new Error(data.info || '连接失败');
+      }
+    } catch (e) {
+      setStatus('disconnected');
+      $('connectBtn').disabled = false;
+      log('ERR', String(e.message || e), 'err');
+      toast('连接失败：' + (e.message || e));
+    }
+    return;
+  }
+
   const host = $('host').value.trim();
   const port = parseInt($('port').value) || 22;
   const username = $('username').value.trim();
@@ -948,6 +1029,9 @@ $('chatInput').addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 });
+
+// 页面加载：拉取历史连接列表
+loadConnections();
 
 // 初始日志
 log('SYS', '调试控制台已就绪。填写左侧连接信息建立 SSH 会话。', 'sys');
