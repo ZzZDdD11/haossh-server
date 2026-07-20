@@ -1,11 +1,9 @@
 """运维 Agent 评估测试。
 
-两种评估方式:
-1. pydantic-evals 框架（Contains 代码型 evaluator，不需 OTel）
-2. 直接断言（工具调用/参数，可靠基线）
-
-注: Span 型 evaluator（ToolCorrectness 等）需配 logfire 账号（uv run logfire auth），
-当前先用代码型 + 直接断言。需要 Span 型时配 logfire 后启用。
+三种评估方式:
+1. pydantic-evals Span 型（ToolCorrectness/MaxToolCalls，依赖 OTel/logfire）
+2. pydantic-evals 代码型（Contains，不需 OTel）
+3. 直接断言（工具调用，可靠基线）
 
 运行: uv run python tests/eval_agent.py
 """
@@ -14,12 +12,26 @@ import asyncio
 import logging
 from unittest.mock import MagicMock, patch
 
+import logfire
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Contains  # 代码型，不需 OTel
+from pydantic_evals.evaluators import ToolCorrectness, MaxToolCalls, Contains
 
 from haossh.agent import agent
 from haossh.agent.deps import AgentDeps
 from haossh.ssh import session, terminal
+
+# 启用 OTel：让 Span 型 evaluator（ToolCorrectness 等）能读 span tree
+# 需先 uv run logfire auth + uv run logfire projects use
+# 未配置则降级（跳过 Span 型 evaluator，只用代码型 + 直接断言）
+LOGFIRE_ENABLED = False
+try:
+    logfire.configure()
+    logfire.instrument_pydantic_ai(agent)
+    LOGFIRE_ENABLED = True
+except Exception as e:
+    print(f"[warn] logfire 未配置，跳过 Span 型 evaluator（ToolCorrectness 等）")
+    print(f"       配置方法: uv run logfire auth && uv run logfire projects use")
+    print(f"       错误: {e}\n")
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -91,7 +103,7 @@ def extract_args(messages: list, tool_name: str) -> list:
     return args_list
 
 
-# ── 方式 1: pydantic-evals 框架（代码型 evaluator）──────────
+# ── 方式 1: pydantic-evals 框架（Span 型 + 代码型 evaluator）─
 
 async def task(inputs: str) -> str:
     """pydantic-evals 的 task 函数，返回 output"""
@@ -104,28 +116,35 @@ async def task(inputs: str) -> str:
         _teardown_mock()
 
 
+def _evaluators(expected_tool: str, max_calls: int, contains_word: str):
+    """构造评估器列表：logfire 配好则加 Span 型，否则只加代码型"""
+    evs = [Contains(contains_word)]  # 代码型始终加
+    if LOGFIRE_ENABLED:
+        evs = [
+            ToolCorrectness(expected_tools=[expected_tool]),  # Span 型
+            MaxToolCalls(max_calls=max_calls),                # Span 型
+        ] + evs
+    return evs
+
+
 dataset = Dataset(name="运维 Agent 评估", cases=[
     Case(
-        name="查磁盘-输出含关键词",
+        name="查磁盘",
         inputs="看一下磁盘使用情况",
-        evaluators=[
-            Contains("磁盘"),       # 代码型：output 应含"磁盘"
-        ],
+        evaluators=_evaluators("execute_command", 4, "磁盘"),
     ),
     Case(
-        name="查内存-输出含关键词",
+        name="查内存",
         inputs="看一下内存使用情况",
-        evaluators=[
-            Contains("内存"),
-        ],
+        evaluators=_evaluators("execute_command", 4, "内存"),
     ),
 ])
 
 
 async def run_pydantic_evals():
-    """方式 1: pydantic-evals 框架评估（代码型 evaluator）"""
+    """方式 1: pydantic-evals 框架评估（Span 型 + 代码型）"""
     print("\n" + "=" * 60)
-    print("方式 1: pydantic-evals 框架（Contains 代码型）")
+    print("方式 1: pydantic-evals 框架（ToolCorrectness + MaxToolCalls + Contains）")
     print("=" * 60)
     report = await dataset.evaluate(task)
     report.print()
@@ -205,7 +224,7 @@ async def run_direct_assertions():
 
 async def main():
     print("=" * 60)
-    print("运维 Agent 评估测试")
+    print("运维 Agent 评估测试（含 OTel span tree）")
     print("=" * 60)
 
     await run_pydantic_evals()
