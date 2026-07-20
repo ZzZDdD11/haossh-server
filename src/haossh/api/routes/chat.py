@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 对话历史存储：session_id → 消息列表
+# 内存存储，服务重启丢失；Phase 5 迁移到数据库
+histories: dict[str, list] = {}
+
 
 def _sse(payload: dict) -> str:
     """组装一条 SSE data 行。"""
@@ -93,12 +97,14 @@ async def chat_stream(req: ChatRequest):
         terminal_session_id=req.terminal_session_id,
         allow_sudo=True,
     )
-
     async def generator():
+        # 取本会话的历史消息（多轮记忆）
+        history = histories.get(req.session_id, [])
         try:
             # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
             # （包括工具调用/结果事件，run_stream 的 stream_text 只给文本）
-            async with agent.iter(req.message, deps=deps) as run:
+            # message_history 传入历史，Agent 才能记得之前聊过什么
+            async with agent.iter(req.message, deps=deps, message_history=history) as run:
                 async for node in run:
                     # ModelRequestNode: 模型流式响应（text/thinking 片段）
                     # CallToolsNode:    工具调用执行（tool_call/tool_result）
@@ -108,6 +114,8 @@ async def chat_stream(req: ChatRequest):
                                 payload = _event_to_payload(event)
                                 if payload is not None:
                                     yield _sse(payload)
+            # with 块结束后 run 才完成，此时存累积消息（历史+本轮）
+            histories[req.session_id] = run.all_messages()
         except Exception as e:
             logger.exception("chat_stream 执行异常 session_id=%s", req.session_id)
             yield _sse({"type": "error", "message": str(e)})
