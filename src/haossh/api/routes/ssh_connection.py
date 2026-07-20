@@ -147,28 +147,29 @@ async def connect(req: ConnectRequest = None, connectionId: str = Query(default=
         port = conn["port"]
         username = conn["username"]
         password = conn["password"]
+        cid = connectionId
     elif req and req.host:
         host = req.host
         port = req.port
         username = req.username
         password = req.password
-        connection_id = uuid.uuid4().hex
+        cid = uuid.uuid4().hex
     else:
         return _err("请提供 connectionId 或连接参数")
 
     ok = await session.connect(
-        connection_id=connectionId or uuid.uuid4().hex,
+        connection_id=cid,
         host=host,
         port=port,
         username=username,
         password=password,
     )
     if ok:
-        if connectionId and connectionId in _connections:
-            _connections[connectionId]["status"] = 1
-        return _ok({"connectionId": connectionId})
-    if connectionId and connectionId in _connections:
-        _connections[connectionId]["status"] = 3  # 失败
+        if cid in _connections:
+            _connections[cid]["status"] = 1
+        return _ok({"connectionId": cid})
+    if cid in _connections:
+        _connections[cid]["status"] = 3  # 失败
     return _err("SSH 连接失败，请检查主机地址和认证信息")
 
 

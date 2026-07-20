@@ -11,7 +11,10 @@ ssh_sessions: dict[str, SSHClientConnection] = {}
 
 async def connect(connection_id: str, host: str, port: int, username: str, password: str) -> bool:
     try:
-        conn = await asyncssh.connect(host=host, username=username, password=password, port=port)
+        conn = await asyncssh.connect(
+            host=host, username=username, password=password, port=port,
+            known_hosts=None,  # 跳过主机密钥验证（调试场景，等同 StrictHostKeyChecking=no）
+        )
         ssh_sessions[connection_id] = conn
         logger.info("SSH 连接成功 connection_id=%s %s@%s:%s", connection_id, username, host, port)
         return True
