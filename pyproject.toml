@@ -30,6 +30,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "langgraph>=1.2.9",
     "pydantic-ai>=2.13.0",
+    "pydantic-evals[logfire]>=2.13.0",
 ]
 
 [project.optional-dependencies]
