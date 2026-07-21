@@ -57,6 +57,40 @@ async def is_connected(connection_id: str) -> bool:
         return False
 
 
-def get_session(connection_id: str) -> SSHClientConnection | None:
-    """获取连接对象，不存在则返回 None。"""
-    return ssh_sessions.get(connection_id)
+async def get_session(connection_id: str) -> SSHClientConnection:
+    """获取连接对象，断了自动重连1次。
+
+    连接正常直接返回；断了从 DB 读信息重连。
+    重连失败（DB 没有记录或服务器不可达）抛 ConnectionError。
+    """
+    conn = ssh_sessions.get(connection_id)
+    if conn is not None and not conn.is_closed():
+        return conn
+    # 连接断了或不存在，尝试重连
+    return await _reconnect(connection_id)
+
+
+async def _reconnect(connection_id: str) -> SSHClientConnection:
+    """从 DB 读连接信息重连。失败抛异常。"""
+    # 延迟 import 避免循环依赖
+    from haossh.db import repo_connection
+    from haossh.ssh.security import decrypt
+
+    conn_info = await repo_connection.get(connection_id)
+    if not conn_info:
+        raise ConnectionError(f"SSH 连接已断开且无法重连：{connection_id} 不在数据库中")
+
+    password = decrypt(conn_info.secret_enc)
+    try:
+        conn = await asyncssh.connect(
+            host=conn_info.host, port=conn_info.port,
+            username=conn_info.username, password=password,
+            known_hosts=None,
+        )
+        ssh_sessions[connection_id] = conn  # 更新连接池
+        logger.info("SSH 自动重连成功 connection_id=%s %s@%s:%s",
+                    connection_id, conn_info.username, conn_info.host, conn_info.port)
+        return conn
+    except Exception as e:
+        logger.warning("SSH 重连失败 connection_id=%s reason=%s", connection_id, e)
+        raise ConnectionError(f"SSH 重连失败: {e}") from e

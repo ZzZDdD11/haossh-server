@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import asyncssh
 
-from haossh.ssh.session import ssh_sessions
+from haossh.ssh.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,7 @@ class FileEntry:
 
 async def _get_sftp(connection_id: str) -> asyncssh.SFTPClient:
     """获取 SFTP 客户端。"""
-    conn = ssh_sessions.get(connection_id)
-    if conn is None:
-        raise ValueError(f"SSH 连接不存在: {connection_id}")
+    conn = await get_session(connection_id)
     return await conn.start_sftp_client()
 
 

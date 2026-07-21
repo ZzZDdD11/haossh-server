@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import asyncssh
 
-from haossh.ssh.session import ssh_sessions
+from haossh.ssh.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,7 @@ async def create(connection_id: str, cols: int = 80, rows: int = 24) -> str:
     Returns:
         terminal_session_id，用于后续读写操作
     """
-    conn = ssh_sessions.get(connection_id)
-    if conn is None:
-        raise ValueError(f"SSH 连接不存在: {connection_id}")
+    conn = await get_session(connection_id)
 
     client_session = _TerminalClientSession()
     chan, _ = await conn.create_session(
@@ -159,9 +157,7 @@ async def exec_command(connection_id: str, command: str, timeout: int = 30) -> t
     Returns:
         (stdout, stderr, exit_status)
     """
-    conn = ssh_sessions.get(connection_id)
-    if conn is None:
-        raise ValueError(f"SSH 连接不存在: {connection_id}")
+    conn = await get_session(connection_id)
 
     result = await conn.run(command, timeout=timeout)
     stdout = result.stdout or ""

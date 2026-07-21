@@ -17,7 +17,7 @@ from haossh.db import session_maker
 from haossh.db.models import Conversation, Message
 
 # 单条 ModelMessage 的序列化器（Union 类型，TypeAdapter 能自动识别子类型）
-_msg_ta = TypeAdapter(ModelMessage)
+_message_adapter = TypeAdapter(ModelMessage)
 
 
 # ===== 对话 CRUD =====
@@ -88,7 +88,7 @@ async def append_messages(conv_id: str, messages: list[ModelMessage]) -> None:
                 conversation_id=conv_id,
                 seq=start_seq + i,
                 role=msg.kind,  # "request" / "response"
-                content_json=_msg_ta.dump_json(msg).decode("utf-8"),
+                content_json=_message_adapter.dump_json(msg).decode("utf-8"),
             )
             session.add(row)
         await session.commit()
@@ -103,4 +103,4 @@ async def get_messages(conv_id: str) -> list[ModelMessage]:
             .order_by(Message.seq)
         )
         rows = (await session.execute(stmt)).scalars().all()
-    return [_msg_ta.validate_json(r.content_json) for r in rows]
+    return [_message_adapter.validate_json(r.content_json) for r in rows]
