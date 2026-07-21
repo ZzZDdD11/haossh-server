@@ -36,3 +36,4 @@
 | [003](./003-dynamic-prompt-not-working.md) | 动态 system prompt 不生效（dynamic=False） | 2026-07-20 | 已解决 |
 | [004](./004-request-limit-exceeded.md) | request_limit 超限（部署复杂任务50轮不够） | 2026-07-20 | 已解决 |
 | [005](./005-ssh-connection-drop.md) | SSH 连接断开导致工具失败（open failed） | 2026-07-20 | 已解决 |
+| [006](./006-ssh-channel-open-error.md) | SSH 连接半开状态导致工具失败（ChannelOpenError） | 2026-07-21 | 已解决 |

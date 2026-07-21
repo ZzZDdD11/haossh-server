@@ -159,7 +159,15 @@ async def exec_command(connection_id: str, command: str, timeout: int = 30) -> t
     """
     conn = await get_session(connection_id)
 
-    result = await conn.run(command, timeout=timeout)
+    try:
+        result = await conn.run(command, timeout=timeout)
+    except asyncssh.misc.ChannelOpenError:
+        # 连接半开状态（is_closed()=False 但无法开 channel），强制重连
+        logger.warning("SSH channel 打开失败，强制重连 connection_id=%s", connection_id)
+        from haossh.ssh.session import _reconnect
+        conn = await _reconnect(connection_id)
+        result = await conn.run(command, timeout=timeout)
+
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     exit_status = result.exit_status if result.exit_status is not None else -1

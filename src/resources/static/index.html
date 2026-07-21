@@ -829,6 +829,8 @@ function resetConn() {
 $('connectBtn').onclick = connect;
 $('disconnectBtn').onclick = disconnect;
 
+let abortController = null;
+
 // ── 对话 ─────────────────────────────────────
 function appendMessage(role, text) {
   $('emptyState')?.remove();
@@ -869,7 +871,9 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   state.streaming = true;
-  $('sendBtn').disabled = true;
+  $('sendBtn').textContent = 'stop';
+  $('sendBtn').classList.add('danger');
+  abortController = new AbortController();
 
   const { m, bubble } = createAiMessage();
   const msgs = $('messages');
@@ -913,6 +917,7 @@ async function sendMessage() {
         message: text,
         terminal_session_id: null,
       }),
+      signal: abortController.signal,
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1005,20 +1010,36 @@ async function sendMessage() {
       bubble.textContent = '(空响应)';
     }
   } catch (e) {
-    if (!bubble.querySelector('.text-content, .tool-card')) {
-      bubble.textContent = '⚠ ' + (e.message || e);
+    if (e.name === 'AbortError') {
+      // 用户主动停止，不算错误
+      if (!bubble.querySelector('.text-content, .tool-card')) {
+        bubble.textContent = '（已停止）';
+      }
+    } else {
+      if (!bubble.querySelector('.text-content, .tool-card')) {
+        bubble.textContent = '⚠ ' + (e.message || e);
+      }
+      log('ERR', String(e.message || e), 'err');
+      toast('请求失败：' + (e.message || e));
     }
-    log('ERR', String(e.message || e), 'err');
-    toast('请求失败：' + (e.message || e));
   } finally {
     m.classList.remove('streaming');
     state.streaming = false;
+    $('sendBtn').textContent = 'send';
+    $('sendBtn').classList.remove('danger');
     $('sendBtn').disabled = false;
     $('chatInput').focus();
   }
 }
 
-$('sendBtn').onclick = sendMessage;
+$('sendBtn').onclick = function() {
+  if (state.streaming && abortController) {
+    abortController.abort();
+    log('SYS', '已停止生成', 'sys');
+  } else {
+    sendMessage();
+  }
+};
 $('chatInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
