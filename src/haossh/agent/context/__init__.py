@@ -17,12 +17,18 @@ from pydantic_ai.messages import ModelMessage
 
 from haossh.agent.context.base import HistoryPipeline
 from haossh.agent.context.compactor import Compactor
+from haossh.agent.context.deduplicator import Deduplicator
+from haossh.agent.context.priority_protector import PriorityProtector
+from haossh.agent.context.summarizer import Summarizer
 from haossh.agent.context.token_trimmer import TokenBudgetTrimmer
 
 # 组装管道（按执行顺序排列）
-# 先压缩（减小每条消息体积）→ 再按 token 裁剪（控制总量不超模型窗口）
+# 压缩 → 去重 → 摘要 → 标记重要 → token裁剪（跳过标记的）
 _pipeline = HistoryPipeline([
     Compactor(),
+    Deduplicator(),
+    Summarizer(),
+    PriorityProtector(),
     TokenBudgetTrimmer(),
 ])
 

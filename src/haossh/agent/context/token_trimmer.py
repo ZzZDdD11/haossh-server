@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
 from haossh.agent.context.base import HistoryProcessor
+from haossh.agent.context.priority_protector import has_keep_marker
 
 logger = logging.getLogger(__name__)
 
@@ -51,21 +52,31 @@ class TokenBudgetTrimmer(HistoryProcessor):
         # 从后往前累加 token
         result: list[ModelMessage] = []
         used = 0
+        kept_important = 0
+        max_important_override = 5  # 最多超预算保留5条重要消息
 
         for i in range(len(history) - 1, -1, -1):
             msg = history[i]
             msg_tokens = _estimate_tokens(msg)
+            is_important = has_keep_marker(msg)
 
             if used + msg_tokens > self.token_budget:
-                # 达到预算，停。但对齐到 ModelResponse 边界。
-                break
-
-            result.insert(0, msg)
-            used += msg_tokens
+                if is_important and kept_important < max_important_override:
+                    # 重要消息，超预算也保留
+                    kept_important += 1
+                    result.insert(0, msg)
+                    used += msg_tokens
+                # else: 非重要且超预算，跳过继续往前找重要的
+            else:
+                result.insert(0, msg)
+                used += msg_tokens
 
         # 对齐：如果结果第一条是 ModelRequest（可能孤立 tool-return），
         # 往后跳过直到第一个 ModelResponse
+        # 但 [!KEEP] 标记的重要消息不 pop
         while result and not isinstance(result[0], ModelResponse):
+            if has_keep_marker(result[0]):
+                break  # 重要消息保留，即使孤立
             result.pop(0)
 
         if len(result) < len(history):
