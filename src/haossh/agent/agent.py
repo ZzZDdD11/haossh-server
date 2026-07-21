@@ -61,3 +61,19 @@ async def connection_status(ctx: RunContext[AgentDeps]) -> str:
     if connected:
         return "## 当前状态\nSSH 已连接，你可以直接调用工具执行命令。"
     return "## 当前状态\n未连接 SSH，你是运维顾问，只能提供建议，不能执行命令。"
+
+
+@agent.system_prompt(dynamic=True)
+async def milestone_summary(ctx: RunContext[AgentDeps]) -> str:
+    """历史里程碑注入：让 LLM 始终能看到关键事件，不受消息裁剪影响。"""
+    conv_id = ctx.deps.conversation_id
+    if not conv_id:
+        return ""
+    from haossh.db import repo_conversation
+    milestones = await repo_conversation.get_milestones(conv_id, limit=10)
+    if not milestones:
+        return ""
+    lines = ["## 历史关键事件（里程碑）"]
+    for m in milestones:
+        lines.append(f"- [{m.event_type}] {m.content}")
+    return "\n".join(lines)

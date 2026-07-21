@@ -78,3 +78,18 @@ class Message(SQLModel, table=True):
     role: str                                               # user / model
     content_json: str                                       # ModelMessage 序列化 JSON
     created_at: str = Field(default_factory=_now_iso)
+
+
+class Milestone(SQLModel, table=True):
+    """对话里程碑——关键事件记忆，独立于消息裁剪。
+
+    LLM 通过 record_milestone 工具主动记录关键事件。
+    每轮 LLM 请求时通过动态 system prompt 注入，不受 TokenBudgetTrimmer 裁剪影响。
+    """
+    __tablename__ = "milestones"
+
+    id: int | None = Field(default=None, primary_key=True)  # 自增
+    conversation_id: str = Field(foreign_key="conversations.id", index=True)
+    event_type: str                                         # error/solution/decision/done
+    content: str                                            # 事件简述
+    created_at: str = Field(default_factory=_now_iso)

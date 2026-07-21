@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlmodel import delete, select
 
 from haossh.db import session_maker
-from haossh.db.models import Conversation, Message
+from haossh.db.models import Conversation, Message, Milestone
 
 # 单条 ModelMessage 的序列化器（Union 类型，TypeAdapter 能自动识别子类型）
 _message_adapter = TypeAdapter(ModelMessage)
@@ -104,3 +104,31 @@ async def get_messages(conv_id: str) -> list[ModelMessage]:
         )
         rows = (await session.execute(stmt)).scalars().all()
     return [_message_adapter.validate_json(r.content_json) for r in rows]
+
+
+# ===== 里程碑读写 =====
+
+async def append_milestone(conv_id: str, event_type: str, content: str) -> None:
+    """追加一条里程碑。"""
+    async with session_maker() as session:
+        milestone = Milestone(
+            conversation_id=conv_id,
+            event_type=event_type,
+            content=content,
+        )
+        session.add(milestone)
+        await session.commit()
+
+
+async def get_milestones(conv_id: str, limit: int = 20) -> list[Milestone]:
+    """获取对话的里程碑，按时间正序（最早的在前）。"""
+    async with session_maker() as session:
+        stmt = (
+            select(Milestone)
+            .where(Milestone.conversation_id == conv_id)
+            .order_by(Milestone.id.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+    return list(reversed(rows))  # 反转为时间正序

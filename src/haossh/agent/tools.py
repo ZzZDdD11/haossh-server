@@ -367,6 +367,37 @@ async def require_connection(
 
 # ── 工具注册清单 ─────────────────────────────────────────────
 
+# 里程碑存储已迁移到 DB（milestones 表），record_milestone 直接写 DB
+
+
+async def record_milestone(
+    ctx: RunContext[AgentDeps],
+    event_type: str,
+    content: str,
+) -> str:
+    """记录关键事件到里程碑系统。
+
+    在对话过程中遇到重要节点时主动调用，帮助保持长期记忆：
+    - error: 命令执行失败、用户报告问题
+    - solution: 找到解决方案、成功修复
+    - decision: 用户改变需求方向、调整目标
+    - done: 任务完成
+
+    里程碑独立于消息历史，不受上下文裁剪影响——每轮请求时通过动态 prompt 注入。
+
+    Args:
+        event_type: 事件类型，必须是 error/solution/decision/done 之一
+        content: 事件简述，一句话说明发生了什么
+    """
+    from haossh.db import repo_conversation
+    conv_id = ctx.deps.conversation_id
+    if not conv_id:
+        return "警告：无对话ID，里程碑未记录"
+    await repo_conversation.append_milestone(conv_id, event_type, content)
+    logger.info("里程碑已记录 conv_id=%s type=%s content=%s", conv_id[:12], event_type, content[:60])
+    return f"已记录里程碑: [{event_type}] {content}"
+
+
 tools: list[Tool] = [
     Tool(
         execute_command,
@@ -406,5 +437,9 @@ tools: list[Tool] = [
         prepare=require_connection,
         max_retries=2,
         timeout=30.0,
+    ),
+    Tool(
+        record_milestone,
+        max_retries=1,
     ),
 ]

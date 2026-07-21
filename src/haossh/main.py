@@ -11,7 +11,7 @@ logging.basicConfig(
 from fastapi import FastAPI, APIRouter
 from fastapi.staticfiles import StaticFiles
 
-from haossh.api.routes import chat, ssh_connection, ssh_file, ssh_terminal, terminal_binding
+from haossh.api.routes import chat, conversation, ssh_connection, ssh_file, ssh_terminal, terminal_binding
 from haossh.db import engine, init_db
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ async def health():
 
 app.include_router(router)
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(conversation.router, prefix="/api/v1")
 app.include_router(ssh_terminal.router, prefix="/api/v1")
 app.include_router(ssh_connection.router, prefix="/api/v1")
 app.include_router(ssh_file.router, prefix="/api/v1")

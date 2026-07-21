@@ -37,3 +37,4 @@
 | [004](./004-request-limit-exceeded.md) | request_limit 超限（部署复杂任务50轮不够） | 2026-07-20 | 已解决 |
 | [005](./005-ssh-connection-drop.md) | SSH 连接断开导致工具失败（open failed） | 2026-07-20 | 已解决 |
 | [006](./006-ssh-channel-open-error.md) | SSH 连接半开状态导致工具失败（ChannelOpenError） | 2026-07-21 | 已解决 |
+| [007](./007-milestone-tracker-experiment.md) | MilestoneTracker 实验测试（LLM 判断力验证） | 2026-07-21 | 实验完成 |

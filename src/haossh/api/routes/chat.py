@@ -114,6 +114,9 @@ async def chat_stream(req: ChatRequest):
             history = []
             logger.info("新建对话 conversation_id=%s session_id=%s", conv_id[:12], req.session_id[:12] if req.session_id else '空')
 
+        # 设置 conversation_id 到 deps，供 record_milestone 和 milestone_summary 使用
+        deps.conversation_id = conv_id
+
         try:
             # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
             # message_history 传入历史，Agent 才能记得之前聊过什么
