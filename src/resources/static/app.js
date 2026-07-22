@@ -92,11 +92,39 @@ function renderConvList() {
     const time = el('span', 'conv-time');
     time.textContent = (c.updated_at || '').slice(5, 16).replace('T', ' ');
     top.appendChild(status); top.appendChild(time);
+    if (c.status !== 'completed') {
+      const termBtn = el('button', 'conv-term-btn');
+      termBtn.textContent = '▢';
+      termBtn.title = 'terminate this conversation';
+      termBtn.onclick = (e) => {
+        e.stopPropagation();  // 不触发 item.onclick 的切换对话逻辑
+        terminateConversation(c.conversation_id);
+      };
+      top.appendChild(termBtn);
+    }
     const summary = el('div', 'conv-summary');
     summary.textContent = c.task_summary || c.title || c.conversation_id.slice(0, 12) + '...';
     item.appendChild(top); item.appendChild(summary);
     item.onclick = () => switchConversation(c.conversation_id);
     list.appendChild(item);
+  }
+}
+
+// 终止指定对话：标记为 completed，仅影响该对话状态，不影响当前 SSH 连接
+async function terminateConversation(convId) {
+  try {
+    const res = await fetch(`${API}/conversation/${convId}/terminate`, { method: 'POST' });
+    const data = await res.json();
+    if (data.code === '0000') {
+      const conv = _conversations.find(c => c.conversation_id === convId);
+      if (conv) conv.status = 'completed';
+      renderConvList();
+      log('SYS', `对话 ${convId.slice(0, 12)}... 已终止`, 'sys');
+    } else {
+      toast('终止失败：' + (data.info || ''));
+    }
+  } catch (e) {
+    toast('终止失败：' + (e.message || e));
   }
 }
 

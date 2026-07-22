@@ -46,3 +46,4 @@
 | [013](./013-tool-visibility-mismatch.md) | 工具可见性与实际执行判断标准不一致（内存清空后工具集体消失） | 2026-07-22 | 已解决 |
 | [014](./014-history-must-end-with-request.md) | 部署跑十几分钟后报错：Processed history must end with a ModelRequest | 2026-07-22 | 已解决 |
 | [015](./015-sftp-channel-leak.md) | SFTP channel 泄漏耗尽 MaxSessions，导致所有工具集体报 ChannelOpenError | 2026-07-22 | 已解决 |
+| [016](./016-session-id-fallback-missing.md) | 服务重启后续聊，session_id 未兜底导致工具集体消失（Unknown tool name） | 2026-07-22 | 已解决 |

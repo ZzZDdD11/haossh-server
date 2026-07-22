@@ -262,6 +262,13 @@
   .conv-status.active { background: rgba(45, 122, 62, 0.15); color: var(--green); }
   .conv-status.completed { background: rgba(160, 145, 122, 0.15); color: var(--fg-mute); }
   .conv-time { font-size: 9px; color: var(--fg-mute); margin-left: auto; }
+  .conv-term-btn {
+    font-size: 10px; line-height: 1; padding: 1px 4px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg-mute); border-radius: 2px; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .conv-term-btn:hover { color: var(--red); border-color: var(--red); }
 
   .conv-summary {
     font-size: 11px; color: var(--fg-dim);

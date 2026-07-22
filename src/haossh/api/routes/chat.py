@@ -107,6 +107,13 @@ async def chat_stream(req: ChatRequest):
             conv = await repo_conversation.get_conversation(conv_id)
             if conv and conv.workspace_path:
                 deps.workspace_path = conv.workspace_path
+            # session_id 兜底：前端未传（如服务重启后 is_connected 返回 false，
+            # 未走恢复流程）时，用该对话本身绑定的 connection_id 兜底——
+            # 这样 require_connection/get_session 现有的 DB 自动重连机制才能接上，
+            # 不会出现"工具集体消失但连接其实能重连"的问题（见 troubleshooting/016）
+            if not deps.session_id and conv and conv.connection_id:
+                deps.session_id = conv.connection_id
+                logger.info("session_id 未传，回退到对话绑定的 connection_id=%s", conv.connection_id[:12])
             logger.info("续聊 conversation_id=%s 历史消息数=%d", conv_id[:12], len(history))
         else:
             conv = Conversation(
