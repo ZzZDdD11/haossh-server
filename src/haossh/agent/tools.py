@@ -406,11 +406,24 @@ async def require_connection(
 ) -> ToolDefinition | None:
     """SSH 未连接时隐藏工具——LLM 根本看不到，避免瞎调浪费交互。
 
-    只做内存级检查（查连接池 dict），不做网络心跳，保证纳秒级返回。
+    判断标准必须和 execute_command 实际执行时的判断标准一致——
+    execute_command 走 persistent_shell → session.get_session()，
+    内存里没有连接时会自动从 DB 重连；如果这里只查内存就隐藏工具，
+    会出现"工具能执行成功，但模型根本看不到工具"的不一致（见 troubleshooting/013）。
+
+    热路径（内存命中）保持纳秒级返回；只有内存未命中时才查一次 DB，
+    不做网络心跳（重连本身交给工具执行时的 get_session 处理）。
     """
     from haossh.ssh.session import ssh_sessions
     conn = ssh_sessions.get(ctx.deps.session_id)
     if conn is not None and not conn.is_closed():
+        return tool_def
+    # 内存未命中：session_id 为空（未连接过）直接隐藏；
+    # 否则查 DB，只要有连接记录就展示工具，重连交给实际调用时处理
+    if not ctx.deps.session_id:
+        return None
+    from haossh.db import repo_connection
+    if await repo_connection.get(ctx.deps.session_id):
         return tool_def
     return None
 

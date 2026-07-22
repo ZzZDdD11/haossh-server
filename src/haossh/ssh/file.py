@@ -1,12 +1,15 @@
 """SFTP 文件操作。
 
 通过 SFTP 协议操作远程服务器的文件系统。
-每个操作函数接收 connection_id，从连接池获取连接后开启 SFTP 客户端。
+每个操作函数接收 connection_id，从连接池获取连接后开启 SFTP 客户端，
+用完立即关闭（见 _sftp_session），避免 channel 泄漏耗尽服务端 MaxSessions。
 """
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import AsyncIterator
 
 import asyncssh
 
@@ -27,10 +30,22 @@ class FileEntry:
     modified_at: float | None = None
 
 
-async def _get_sftp(connection_id: str) -> asyncssh.SFTPClient:
-    """获取 SFTP 客户端。"""
+@asynccontextmanager
+async def _sftp_session(connection_id: str) -> AsyncIterator[asyncssh.SFTPClient]:
+    """获取 SFTP 客户端，用完自动关闭底层 channel。
+
+    每次 start_sftp_client() 会在 SSH 连接上开一个新的 session channel（服务端有
+    MaxSessions 数量上限，OpenSSH 默认 10）。用 async with 包裹确保退出时调用
+    exit()+wait_closed() 释放 channel，避免连续多次文件操作把 channel 耗尽后
+    所有工具（包括普通命令）都因 ChannelOpenError 报错（见 troubleshooting/015）。
+    """
     conn = await get_session(connection_id)
-    return await conn.start_sftp_client()
+    sftp = await conn.start_sftp_client()
+    try:
+        yield sftp
+    finally:
+        sftp.exit()
+        await sftp.wait_closed()
 
 
 def _mode_to_type(mode: int) -> str:
@@ -63,19 +78,18 @@ def _mode_to_permissions(mode: int) -> str:
 
 async def list_dir(connection_id: str, path: str) -> list[FileEntry]:
     """列出目录内容（单层，不递归）。"""
-    sftp = await _get_sftp(connection_id)
     entries: list[FileEntry] = []
-
-    async for item in sftp.scandir(path):
-        ftype = _mode_to_type(item.attrs.permissions)
-        entries.append(FileEntry(
-            name=item.filename,
-            path=os.path.join(path, item.filename),
-            type=ftype,
-            size=item.attrs.size or 0,
-            permissions=_mode_to_permissions(item.attrs.permissions),
-            modified_at=item.attrs.mtime,
-        ))
+    async with _sftp_session(connection_id) as sftp:
+        async for item in sftp.scandir(path):
+            ftype = _mode_to_type(item.attrs.permissions)
+            entries.append(FileEntry(
+                name=item.filename,
+                path=os.path.join(path, item.filename),
+                type=ftype,
+                size=item.attrs.size or 0,
+                permissions=_mode_to_permissions(item.attrs.permissions),
+                modified_at=item.attrs.mtime,
+            ))
 
     logger.debug("列出目录 connection_id=%s path=%s count=%d", connection_id, path, len(entries))
     return entries
@@ -83,10 +97,9 @@ async def list_dir(connection_id: str, path: str) -> list[FileEntry]:
 
 async def read_content(connection_id: str, path: str) -> str:
     """读取文件全部内容（文本）。"""
-    sftp = await _get_sftp(connection_id)
-
-    async with sftp.open(path, "r") as f:  # pyright: ignore
-        content = await f.read()
+    async with _sftp_session(connection_id) as sftp:
+        async with sftp.open(path, "r") as f:  # pyright: ignore
+            content = await f.read()
 
     logger.debug("读取文件 connection_id=%s path=%s size=%d", connection_id, path, len(content))
     return content
@@ -101,36 +114,34 @@ async def read_chunk(connection_id: str, path: str, offset: int, size: int) -> s
         offset: 起始字节位置
         size: 读取字节数
     """
-    sftp = await _get_sftp(connection_id)
-
-    async with sftp.open(path, "r") as f:  # pyright: ignore
-        await f.seek(offset)
-        content = await f.read(size)
+    async with _sftp_session(connection_id) as sftp:
+        async with sftp.open(path, "r") as f:  # pyright: ignore
+            await f.seek(offset)
+            content = await f.read(size)
 
     return content
 
 
 async def file_exists(connection_id: str, path: str) -> bool:
     """检查文件或目录是否存在。"""
-    sftp = await _get_sftp(connection_id)
-    return await sftp.exists(path)
+    async with _sftp_session(connection_id) as sftp:
+        return await sftp.exists(path)
 
 
 async def get_size(connection_id: str, path: str) -> int:
     """获取文件大小（字节）。"""
-    sftp = await _get_sftp(connection_id)
-    attrs = await sftp.stat(path)
-    return attrs.size or 0
+    async with _sftp_session(connection_id) as sftp:
+        attrs = await sftp.stat(path)
+        return attrs.size or 0
 
 
 # ── 文件编辑 ──────────────────────────────────────────────────
 
 async def create_file(connection_id: str, path: str, content: str = "") -> None:
     """创建新文件（写入内容）。"""
-    sftp = await _get_sftp(connection_id)
-
-    async with sftp.open(path, "w") as f:  # pyright: ignore
-        await f.write(content)
+    async with _sftp_session(connection_id) as sftp:
+        async with sftp.open(path, "w") as f:  # pyright: ignore
+            await f.write(content)
 
     logger.info("文件已创建 connection_id=%s path=%s", connection_id, path)
 
@@ -143,8 +154,8 @@ async def save_content(connection_id: str, path: str, content: str) -> None:
 
 async def create_directory(connection_id: str, path: str) -> None:
     """创建目录（递归创建父目录）。"""
-    sftp = await _get_sftp(connection_id)
-    await sftp.makedirs(path)
+    async with _sftp_session(connection_id) as sftp:
+        await sftp.makedirs(path)
     logger.info("目录已创建 connection_id=%s path=%s", connection_id, path)
 
 
@@ -152,19 +163,19 @@ async def create_directory(connection_id: str, path: str) -> None:
 
 async def rename_file(connection_id: str, old_path: str, new_path: str) -> None:
     """重命名/移动文件或目录。"""
-    sftp = await _get_sftp(connection_id)
-    await sftp.rename(old_path, new_path)
+    async with _sftp_session(connection_id) as sftp:
+        await sftp.rename(old_path, new_path)
     logger.info("文件已重命名 connection_id=%s %s -> %s", connection_id, old_path, new_path)
 
 
 async def delete(connection_id: str, path: str) -> None:
     """删除文件或目录（目录递归删除）。"""
-    sftp = await _get_sftp(connection_id)
-    is_dir = await sftp.isdir(path)
-    if is_dir:
-        await sftp.rmtree(path)
-    else:
-        await sftp.remove(path)
+    async with _sftp_session(connection_id) as sftp:
+        is_dir = await sftp.isdir(path)
+        if is_dir:
+            await sftp.rmtree(path)
+        else:
+            await sftp.remove(path)
     logger.info("已删除 connection_id=%s path=%s", connection_id, path)
 
 
@@ -176,10 +187,9 @@ async def upload(connection_id: str, local_data: bytes, remote_path: str) -> Non
         local_data: 文件的二进制内容
         remote_path: 远程目标路径
     """
-    sftp = await _get_sftp(connection_id)
-
-    async with sftp.open(remote_path, "wb") as f:  # pyright: ignore
-        await f.write(local_data)
+    async with _sftp_session(connection_id) as sftp:
+        async with sftp.open(remote_path, "wb") as f:  # pyright: ignore
+            await f.write(local_data)
 
     logger.info("文件已上传 connection_id=%s path=%s size=%d", connection_id, remote_path, len(local_data))
 
@@ -190,10 +200,9 @@ async def download(connection_id: str, remote_path: str) -> bytes:
     Returns:
         文件的二进制内容
     """
-    sftp = await _get_sftp(connection_id)
-
-    async with sftp.open(remote_path, "rb") as f:  # pyright: ignore
-        content = await f.read()
+    async with _sftp_session(connection_id) as sftp:
+        async with sftp.open(remote_path, "rb") as f:  # pyright: ignore
+            content = await f.read()
 
     logger.info("文件已下载 connection_id=%s path=%s size=%d", connection_id, remote_path, len(content))
     return content

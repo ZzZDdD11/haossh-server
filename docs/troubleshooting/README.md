@@ -42,3 +42,7 @@
 | [009](./009-workspace-isolation-design.md) | 部署任务中 Agent 认知混淆（缺少工作区锚点） | 2026-07-22 | 方案设计完成，待实现 |
 | [010](./010-persistent-shell.md) | execute_command 的 shell 无状态化（cd 不跨调用生效） | 2026-07-22 | 已解决 |
 | [011](./011-workspace-observation.md) | 工作区锚点落地：观测真实 cwd，而非声明式设置 | 2026-07-22 | 已解决 |
+| [012](./012-prompt-scenario-bloat.md) | Prompt 场景枚举堆叠：加了又删的"部署流程"小节 | 2026-07-22 | 已解决（撤回改动） |
+| [013](./013-tool-visibility-mismatch.md) | 工具可见性与实际执行判断标准不一致（内存清空后工具集体消失） | 2026-07-22 | 已解决 |
+| [014](./014-history-must-end-with-request.md) | 部署跑十几分钟后报错：Processed history must end with a ModelRequest | 2026-07-22 | 已解决 |
+| [015](./015-sftp-channel-leak.md) | SFTP channel 泄漏耗尽 MaxSessions，导致所有工具集体报 ChannelOpenError | 2026-07-22 | 已解决 |

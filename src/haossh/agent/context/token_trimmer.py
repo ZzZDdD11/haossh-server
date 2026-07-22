@@ -49,13 +49,17 @@ class TokenBudgetTrimmer(HistoryProcessor):
         if not history:
             return history
 
-        # 从后往前累加 token
-        result: list[ModelMessage] = []
-        used = 0
+        # 最后一条是当前轮要回复的请求（通常是 user-prompt / tool-return，均为 ModelRequest），
+        # 无论多大都必须保留——否则 pydantic-ai 会报 "Processed history must end with a `ModelRequest`"。
+        last_msg = history[-1]
+
+        # 从倒数第二条往前累加 token（最后一条已强制保留）
+        result: list[ModelMessage] = [last_msg]
+        used = _estimate_tokens(last_msg)
         kept_important = 0
         max_important_override = 5  # 最多超预算保留5条重要消息
 
-        for i in range(len(history) - 1, -1, -1):
+        for i in range(len(history) - 2, -1, -1):
             msg = history[i]
             msg_tokens = _estimate_tokens(msg)
             is_important = has_keep_marker(msg)
@@ -71,10 +75,10 @@ class TokenBudgetTrimmer(HistoryProcessor):
                 result.insert(0, msg)
                 used += msg_tokens
 
-        # 对齐：如果结果第一条是 ModelRequest（可能孤立 tool-return），
-        # 往后跳过直到第一个 ModelResponse
-        # 但 [!KEEP] 标记的重要消息不 pop
-        while result and not isinstance(result[0], ModelResponse):
+        # 开头对齐：如果结果第一条是 ModelRequest（可能孤立 tool-return），
+        # 往后跳过直到第一个 ModelResponse。但 [!KEEP] 标记的重要消息不 pop，
+        # 且不能把唯一的最后一条 pop 掉。
+        while len(result) > 1 and not isinstance(result[0], ModelResponse):
             if has_keep_marker(result[0]):
                 break  # 重要消息保留，即使孤立
             result.pop(0)

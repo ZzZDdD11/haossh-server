@@ -108,6 +108,17 @@ async function switchConversation(convId) {
   $('messages').innerHTML = '';
   log('SYS', `切换到历史对话 ${convId.slice(0, 12)}...`, 'sys');
   await loadAndRenderMessages(convId);
+
+  // 恢复该对话关联的 SSH 连接状态（若该连接仍存活）
+  const conv = _conversations.find(c => c.conversation_id === convId);
+  if (conv && conv.connection_id) {
+    const ok = await restoreConnectionUI(conv.connection_id);
+    if (ok) {
+      log('SYS', 'SSH 连接已恢复（来自历史对话）', 'sys');
+    } else {
+      log('SYS', '该对话关联的 SSH 连接已断开，如需操作请重新连接', 'sys');
+    }
+  }
 }
 
 $('newConvBtn').onclick = () => {
@@ -502,32 +513,45 @@ $('chatInput').addEventListener('input', function() {
 loadConnections();
 loadConversationList();
 
-// 页面加载：恢复上次 SSH 连接状态
-async function loadLastConnection() {
-  const lastId = localStorage.getItem('lastConnectionId');
-  if (!lastId) return;
+// 检查指定连接是否存活，存活则恢复连接 UI 状态（供"恢复上次连接"和"切换历史对话"共用）
+// 返回 true 表示已恢复为 connected，false 表示未连接
+async function restoreConnectionUI(connId) {
+  if (!connId) return false;
   try {
-    const res = await fetch(`${API}/ssh/is_connected?connectionId=${lastId}`);
+    const res = await fetch(`${API}/ssh/is_connected?connectionId=${connId}`);
     const data = await res.json();
     if (data.code === '0000' && data.data?.connected) {
-      state.connectionId = lastId;
-      state.savedConnectionId = lastId;
+      state.connectionId = connId;
+      state.savedConnectionId = connId;
       state.connected = true;
       setStatus('connected');
       $('connIdDisplay').style.display = '';
-      $('connIdVal').textContent = lastId.slice(0, 12) + '...';
+      $('connIdVal').textContent = connId.slice(0, 12) + '...';
       $('disconnectBtn').disabled = false;
+      $('chatInput').disabled = false;
+      $('sendBtn').disabled = false;
+      localStorage.setItem('lastConnectionId', connId);
       // 获取连接信息填充 UI
-      const connRes = await fetch(`${API}/ssh/get_connection?connectionId=${lastId}`);
+      const connRes = await fetch(`${API}/ssh/get_connection?connectionId=${connId}`);
       const connData = await connRes.json();
       if (connData.code === '0000' && connData.data) {
         $('info-host').textContent = connData.data.host;
         $('info-user').textContent = connData.data.username;
         $('info-port').textContent = connData.data.port;
       }
-      log('SYS', 'SSH 连接已恢复', 'sys');
+      return true;
     }
   } catch (e) { /* 静默失败 */ }
+  return false;
+}
+
+// 页面加载：恢复上次 SSH 连接状态
+async function loadLastConnection() {
+  const lastId = localStorage.getItem('lastConnectionId');
+  if (!lastId) return;
+  if (await restoreConnectionUI(lastId)) {
+    log('SYS', 'SSH 连接已恢复', 'sys');
+  }
 }
 
 loadLastConnection();
