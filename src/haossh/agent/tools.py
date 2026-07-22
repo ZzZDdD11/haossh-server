@@ -11,6 +11,7 @@ import logging
 import re
 import shlex
 import uuid
+from typing import Literal
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.exceptions import ModelRetry
@@ -88,6 +89,8 @@ async def execute_command(
             timeout=timeout,
         )
     except asyncio.TimeoutError:
+        await _auto_record_milestone(ctx, "error", f"命令超时 ({timeout}s): {command[:80]}")
+        ctx.deps.last_command_failed = True
         raise ModelRetry(
             f"命令执行超时（{timeout}秒）。长时间命令请改用 run_background 后台执行，再用 check_task 轮询。"
         ) from None
@@ -96,6 +99,8 @@ async def execute_command(
             "命令执行失败 session_id=%s command=%s error=%s",
             ctx.deps.session_id, command, e,
         )
+        await _auto_record_milestone(ctx, "error", f"命令异常: {command[:80]} - {e}")
+        ctx.deps.last_command_failed = True
         # 反馈给 LLM，让它据此重试或换方案
         raise ModelRetry(f"命令执行失败: {e}") from e
 
@@ -107,6 +112,16 @@ async def execute_command(
         parts.append(f"[stderr]\n{stderr}")
     if not stdout and not stderr:
         parts.append("(命令执行完成，无输出)")
+
+    # 6. 规则层自动记录里程碑：error / solution（不依赖 LLM 判断）
+    if exit_status != 0:
+        await _auto_record_milestone(ctx, "error", f"命令失败 (exit={exit_status}): {command[:80]}")
+        ctx.deps.last_command_failed = True
+    else:
+        if ctx.deps.last_command_failed:
+            await _auto_record_milestone(ctx, "solution", f"命令成功恢复: {command[:80]}")
+        ctx.deps.last_command_failed = False
+
     return "\n".join(parts)
 
 
@@ -279,6 +294,8 @@ async def run_background(
             timeout=10,
         )
     except Exception as e:
+        await _auto_record_milestone(ctx, "error", f"后台任务启动失败: {command[:80]} - {e}")
+        ctx.deps.last_command_failed = True
         raise ModelRetry(f"启动后台任务失败: {e}") from e
 
     # 4. 解析 PID（echo $! 输出在最后一行）
@@ -370,23 +387,39 @@ async def require_connection(
 # 里程碑存储已迁移到 DB（milestones 表），record_milestone 直接写 DB
 
 
+async def _auto_record_milestone(ctx: RunContext[AgentDeps], event_type: str, content: str) -> None:
+    """规则层自动记录里程碑（不经过 LLM 判断）。
+
+    用于 error/solution/task_start 等可从结构化信号（exit code、异常）确定的事件。
+    用 try/except 包裹，确保规则层失败不影响主流程。
+    """
+    conv_id = ctx.deps.conversation_id
+    if not conv_id:
+        return
+    from haossh.db import repo_conversation
+    try:
+        await repo_conversation.append_milestone(conv_id, event_type, content)
+        logger.info("[规则层] 里程碑 conv_id=%s type=%s content=%s", conv_id[:12], event_type, content[:60])
+    except Exception as e:
+        logger.warning("[规则层] 里程碑记录失败: %s", e)
+
+
 async def record_milestone(
     ctx: RunContext[AgentDeps],
-    event_type: str,
+    event_type: Literal["decision", "done"],
     content: str,
 ) -> str:
-    """记录关键事件到里程碑系统。
+    """记录关键事件到里程碑系统（模型自主调用）。
 
-    在对话过程中遇到重要节点时主动调用，帮助保持长期记忆：
-    - error: 命令执行失败、用户报告问题
-    - solution: 找到解决方案、成功修复
-    - decision: 用户改变需求方向、调整目标
+    error/solution/task_start 已由规则层自动记录（exit code、异常触发），
+    模型只需记录需要语义判断的两类事件：
+    - decision: 用户改变需求方向、调整目标、取消某步骤
     - done: 任务完成
 
     里程碑独立于消息历史，不受上下文裁剪影响——每轮请求时通过动态 prompt 注入。
 
     Args:
-        event_type: 事件类型，必须是 error/solution/decision/done 之一
+        event_type: 事件类型，只能是 decision 或 done
         content: 事件简述，一句话说明发生了什么
     """
     from haossh.db import repo_conversation
@@ -394,6 +427,9 @@ async def record_milestone(
     if not conv_id:
         return "警告：无对话ID，里程碑未记录"
     await repo_conversation.append_milestone(conv_id, event_type, content)
+    # 任务完成时自动更新对话状态
+    if event_type == "done":
+        await repo_conversation.update_conversation_status(conv_id, "completed", content)
     logger.info("里程碑已记录 conv_id=%s type=%s content=%s", conv_id[:12], event_type, content[:60])
     return f"已记录里程碑: [{event_type}] {content}"
 

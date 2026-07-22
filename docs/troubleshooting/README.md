@@ -38,3 +38,4 @@
 | [005](./005-ssh-connection-drop.md) | SSH 连接断开导致工具失败（open failed） | 2026-07-20 | 已解决 |
 | [006](./006-ssh-channel-open-error.md) | SSH 连接半开状态导致工具失败（ChannelOpenError） | 2026-07-21 | 已解决 |
 | [007](./007-milestone-tracker-experiment.md) | MilestoneTracker 实验测试（LLM 判断力验证） | 2026-07-21 | 实验完成 |
+| [008](./008-milestone-hybrid-mode.md) | MilestoneTracker 召回率低（LLM 不主动记录隐含事件） | 2026-07-22 | 已解决 |

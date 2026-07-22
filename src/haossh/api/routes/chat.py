@@ -112,6 +112,8 @@ async def chat_stream(req: ChatRequest):
             await repo_conversation.create_conversation(conv)
             conv_id = conv.id
             history = []
+            # 规则层：新对话首轮自动记录 task_start，保留任务原始意图（防上下文裁剪丢失）
+            await repo_conversation.append_milestone(conv_id, "task_start", req.message[:100])
             logger.info("新建对话 conversation_id=%s session_id=%s", conv_id[:12], req.session_id[:12] if req.session_id else '空')
 
         # 设置 conversation_id 到 deps，供 record_milestone 和 milestone_summary 使用

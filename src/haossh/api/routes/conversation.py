@@ -95,3 +95,22 @@ async def get_conversation_messages(conv_id: str):
     if not messages:
         return _err(f"对话不存在或无消息: {conv_id}")
     return _ok({"conversation_id": conv_id, "messages": _messages_to_dto(messages)})
+
+
+@router.get("/list")
+async def list_conversations(userId: str = "default"):
+    """列出用户的对话（含状态和任务简述）。"""
+    from fastapi import Query
+    convs = await repo_conversation.list_conversations(userId)
+    return _ok([
+        {
+            "conversation_id": c.id,
+            "title": c.title,
+            "status": c.status,
+            "task_summary": c.task_summary,
+            "connection_id": c.connection_id,
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        for c in convs
+    ])

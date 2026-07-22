@@ -50,6 +50,9 @@ class Conversation(SQLModel, table=True):
 
     与 SSH 连接解耦：一个对话可选关联一台机器（connection_id 可空）。
     SSH 断开重连只需更新 connection_id，对话历史（messages）不动。
+
+    status: active（进行中）/ completed（已完成）
+    task_summary: 任务简述，agent 调 record_milestone(done) 时自动填充
     """
     __tablename__ = "conversations"
 
@@ -59,6 +62,8 @@ class Conversation(SQLModel, table=True):
         default=None, foreign_key="ssh_connections.id", index=True
     )
     title: str | None = None                               # 列表展示用
+    status: str = Field(default="active", index=True)      # active / completed
+    task_summary: str | None = None                        # 任务简述（完成时填充）
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 

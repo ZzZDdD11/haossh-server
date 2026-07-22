@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlmodel import delete, select
 
 from haossh.db import session_maker
-from haossh.db.models import Conversation, Message, Milestone
+from haossh.db.models import Conversation, Message, Milestone, _now_iso
 
 # 单条 ModelMessage 的序列化器（Union 类型，TypeAdapter 能自动识别子类型）
 _message_adapter = TypeAdapter(ModelMessage)
@@ -56,6 +56,19 @@ async def update_conversation(conv: Conversation) -> Conversation:
         await session.commit()
         await session.refresh(merged)
         return merged
+
+
+async def update_conversation_status(conv_id: str, status: str, task_summary: str | None = None) -> None:
+    """更新对话状态（active/completed）。"""
+    async with session_maker() as session:
+        conv = await session.get(Conversation, conv_id)
+        if not conv:
+            return
+        conv.status = status
+        if task_summary:
+            conv.task_summary = task_summary
+        conv.updated_at = _now_iso()
+        await session.commit()
 
 
 async def delete_conversation(conv_id: str) -> bool:

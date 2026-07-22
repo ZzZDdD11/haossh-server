@@ -109,7 +109,8 @@ async def main():
     print("=" * 60)
 
     cases = [
-        ("用户报告错误", "刚才我在服务器上执行 uv sync 报错了，说端口 8080 被占用", "error", True),
+        # error 现由规则层自动记录（execute_command 失败时触发），模型不应手动调
+        ("用户报告错误-模型不记", "刚才我在服务器上执行 uv sync 报错了，说端口 8080 被占用", None, False),
         ("用户改需求", "不对，我不要查磁盘了，帮我查下内存使用情况", "decision", True),
         ("任务完成", "好的，nginx 已经启动成功了，搞定了", "done", True),
         ("普通提问不记录", "df -h 这个命令是什么意思？", None, False),
