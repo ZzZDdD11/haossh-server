@@ -28,6 +28,9 @@ async def disconnect(connection_id: str) -> bool:
     if conn is None:
         logger.warning("SSH 断开连接失败：连接不存在 connection_id=%s", connection_id)
         return False
+    # 清理该连接下所有持久 shell（避免占用已失效的 channel 引用）
+    from haossh.ssh.persistent_shell import close_shells_for_connection
+    await close_shells_for_connection(connection_id)
     try:
         conn.close()
         await conn.wait_closed()

@@ -226,6 +226,55 @@
   .info-block .k { color: var(--fg-mute); }
   .info-block .v { color: var(--cyan); }
 
+  /* 历史对话列表 */
+  .conv-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--bg-inset);
+  }
+  .conv-list::-webkit-scrollbar { width: 6px; }
+  .conv-list::-webkit-scrollbar-track { background: transparent; }
+  .conv-list::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+
+  .conv-item {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .conv-item:last-child { border-bottom: none; }
+  .conv-item:hover { background: rgba(168, 112, 26, 0.06); }
+  .conv-item.active {
+    background: rgba(13, 124, 138, 0.08);
+    border-left: 2px solid var(--cyan);
+  }
+
+  .conv-item-top {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 3px;
+  }
+  .conv-status {
+    font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 2px;
+  }
+  .conv-status.active { background: rgba(45, 122, 62, 0.15); color: var(--green); }
+  .conv-status.completed { background: rgba(160, 145, 122, 0.15); color: var(--fg-mute); }
+  .conv-time { font-size: 9px; color: var(--fg-mute); margin-left: auto; }
+
+  .conv-summary {
+    font-size: 11px; color: var(--fg-dim);
+    line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+
+  .conv-list-empty {
+    padding: 16px 10px; text-align: center;
+    font-size: 11px; color: var(--fg-mute);
+  }
+
   /* 中栏 - 对话 */
   .chat-panel { background: var(--bg); }
   .messages {

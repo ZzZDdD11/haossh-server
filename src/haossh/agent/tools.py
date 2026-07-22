@@ -19,6 +19,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from haossh.agent.deps import AgentDeps
 from haossh.ssh import file as sftp
+from haossh.ssh import persistent_shell
 from haossh.ssh import terminal
 
 logger = logging.getLogger(__name__)
@@ -81,19 +82,35 @@ async def execute_command(
     # 3. 超时上限约束
     timeout = min(timeout, ctx.deps.max_command_timeout)
 
-    # 4. 执行
+    # 4. 执行——有 conversation_id 时走持久 shell（cd/环境变量跨调用保持），
+    #    否则（如单测场景）退回一次性执行，不做状态持久化
+    conv_id = ctx.deps.conversation_id
+    was_rebuilt = False
+    cwd = ""
     try:
-        stdout, stderr, exit_status = await terminal.exec_command(
-            connection_id=ctx.deps.session_id,
-            command=command,
-            timeout=timeout,
-        )
+        if conv_id:
+            shell, was_rebuilt = await persistent_shell.get_shell(
+                conv_id, ctx.deps.session_id, known_workspace=ctx.deps.workspace_path
+            )
+            stdout, stderr, exit_status, cwd = await shell.run(command, timeout=timeout)
+        else:
+            stdout, stderr, exit_status = await terminal.exec_command(
+                connection_id=ctx.deps.session_id,
+                command=command,
+                timeout=timeout,
+            )
     except asyncio.TimeoutError:
         await _auto_record_milestone(ctx, "error", f"命令超时 ({timeout}s): {command[:80]}")
         ctx.deps.last_command_failed = True
         raise ModelRetry(
             f"命令执行超时（{timeout}秒）。长时间命令请改用 run_background 后台执行，再用 check_task 轮询。"
         ) from None
+    except ConnectionError as e:
+        # 持久 shell 已失效，下次调用会自动重建（重建后会在结果里提示模型）
+        logger.warning("持久 shell 失效 conversation_id=%s error=%s", conv_id[:12] if conv_id else "", e)
+        await _auto_record_milestone(ctx, "error", f"执行环境已重置: {command[:80]}")
+        ctx.deps.last_command_failed = True
+        raise ModelRetry(f"命令执行失败，执行环境已断开: {e}。请重试；若之前 cd 过目录，需要重新 cd。") from e
     except Exception as e:
         logger.warning(
             "命令执行失败 session_id=%s command=%s error=%s",
@@ -104,8 +121,24 @@ async def execute_command(
         # 反馈给 LLM，让它据此重试或换方案
         raise ModelRetry(f"命令执行失败: {e}") from e
 
-    # 5. 组装返回——让 LLM 清楚看到退出码与 stderr
-    parts: list[str] = [f"[exit={exit_status}]"]
+    # 5. 工作区观测：cwd 是真实观测值，变了才写库（幂等，不需要判断"是否新项目"）
+    if cwd and cwd != ctx.deps.workspace_path:
+        ctx.deps.workspace_path = cwd
+        if conv_id:
+            from haossh.db import repo_conversation
+            await repo_conversation.update_workspace(conv_id, cwd)
+
+    # 6. 组装返回——让 LLM 清楚看到退出码与 stderr
+    parts: list[str] = []
+    if was_rebuilt:
+        # 强制回显：执行环境已重置。若已知历史工作区，shell 已自动 cd 恢复
+        if ctx.deps.workspace_path:
+            parts.append(f"[!] 执行环境已重新创建，已自动恢复到工作区 {ctx.deps.workspace_path}")
+        else:
+            parts.append("[!] 执行环境已重新创建（之前的 cd 目录和环境变量已丢失，如需要请重新 cd）")
+    if cwd:
+        parts.append(f"[workspace={cwd}]")
+    parts.append(f"[exit={exit_status}]")
     if stdout:
         parts.append(f"[stdout]\n{stdout}")
     if stderr:

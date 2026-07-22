@@ -64,6 +64,19 @@ async def connection_status(ctx: RunContext[AgentDeps]) -> str:
 
 
 @agent.system_prompt(dynamic=True)
+def workspace_status(ctx: RunContext[AgentDeps]) -> str:
+    """工作区提示：告知 LLM 当前所在目录（从持久 shell 真实 cwd 观测得到）。
+
+    execute_command 的结果里也会打 [workspace=xxx] 标签（贴近决策点，更难被忽略），
+    这里作为兜底——万一某轮没调用工具，模型仍能在决策前看到当前所在目录，
+    避免把无关目录（如机器上其他项目的残留文件）误认成当前任务范围。
+    """
+    if not ctx.deps.workspace_path:
+        return ""
+    return f"## 当前工作区\n{ctx.deps.workspace_path}\n（这是当前任务实际所在目录，与此无关的路径不属于当前任务）"
+
+
+@agent.system_prompt(dynamic=True)
 async def milestone_summary(ctx: RunContext[AgentDeps]) -> str:
     """历史里程碑注入：让 LLM 始终能看到关键事件，不受消息裁剪影响。"""
     conv_id = ctx.deps.conversation_id

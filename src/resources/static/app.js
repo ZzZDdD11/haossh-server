@@ -62,6 +62,63 @@ $('clearLog').onclick = () => {
   $('logBody').innerHTML = '<div class="log-empty">等待事件流...</div>';
 };
 
+// ── 历史对话 ─────────────────────────────────
+let _conversations = [];
+
+async function loadConversationList() {
+  try {
+    const res = await fetch(`${API}/conversation/list?userId=default`);
+    const data = await res.json();
+    if (data.code === '0000' && Array.isArray(data.data) && data.data.length > 0) {
+      _conversations = data.data;
+      renderConvList();
+      $('conversationListGroup').style.display = '';
+    }
+  } catch (e) { /* 静默失败，不影响新对话 */ }
+}
+
+function renderConvList() {
+  const list = $('convList');
+  list.innerHTML = '';
+  if (_conversations.length === 0) {
+    list.innerHTML = '<div class="conv-list-empty">暂无历史对话</div>';
+    return;
+  }
+  for (const c of _conversations) {
+    const item = el('div', 'conv-item' + (c.conversation_id === state.conversationId ? ' active' : ''));
+    const top = el('div', 'conv-item-top');
+    const status = el('span', 'conv-status ' + c.status);
+    status.textContent = c.status === 'completed' ? 'done' : 'active';
+    const time = el('span', 'conv-time');
+    time.textContent = (c.updated_at || '').slice(5, 16).replace('T', ' ');
+    top.appendChild(status); top.appendChild(time);
+    const summary = el('div', 'conv-summary');
+    summary.textContent = c.task_summary || c.title || c.conversation_id.slice(0, 12) + '...';
+    item.appendChild(top); item.appendChild(summary);
+    item.onclick = () => switchConversation(c.conversation_id);
+    list.appendChild(item);
+  }
+}
+
+async function switchConversation(convId) {
+  if (convId === state.conversationId) return;
+  state.conversationId = convId;
+  localStorage.setItem('lastConversationId', convId);
+  renderConvList();
+  $('messages').innerHTML = '';
+  log('SYS', `切换到历史对话 ${convId.slice(0, 12)}...`, 'sys');
+  await loadAndRenderMessages(convId);
+}
+
+$('newConvBtn').onclick = () => {
+  state.conversationId = null;
+  localStorage.removeItem('lastConversationId');
+  renderConvList();
+  const msgs = $('messages');
+  msgs.innerHTML = '<div class="empty-state" id="emptyState"><div class="glyph">[ ]</div><div class="hint">向运维 Agent 描述你的需求。连接 SSH 后可直接执行命令；未连接时可咨询运维问题。</div></div>';
+  log('SYS', '已新建对话', 'sys');
+};
+
 // ── 历史连接 ─────────────────────────────────
 let _savedConnections = [];
 
@@ -384,6 +441,7 @@ async function sendMessage() {
           if (evt.conversation_id) {
             state.conversationId = evt.conversation_id;
             localStorage.setItem('lastConversationId', evt.conversation_id);
+            loadConversationList();  // 刷新列表（新对话/状态可能已变化）
           }
           log('STREAM', '[DONE]', 'res');
         } else if (evt.type === 'error') {
@@ -440,8 +498,9 @@ $('chatInput').addEventListener('input', function() {
   this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 });
 
-// 页面加载：拉取历史连接列表
+// 页面加载：拉取历史连接列表 + 历史对话列表
 loadConnections();
+loadConversationList();
 
 // 页面加载：恢复上次 SSH 连接状态
 async function loadLastConnection() {
@@ -473,19 +532,24 @@ async function loadLastConnection() {
 
 loadLastConnection();
 
+// 拉取并渲染指定对话的历史消息（供"恢复上次对话"和"切换历史对话"共用）
+async function loadAndRenderMessages(convId) {
+  try {
+    const res = await fetch(`${API}/conversation/${convId}/messages`);
+    const data = await res.json();
+    if (data.code === '0000' && data.data?.messages?.length > 0) {
+      renderHistory(data.data.messages);
+      log('SYS', `已加载对话（${data.data.messages.length} 条消息）`, 'sys');
+    }
+  } catch (e) { /* 静默失败 */ }
+}
+
 // 页面加载：恢复上次对话
 async function loadLastConversation() {
   const lastId = localStorage.getItem('lastConversationId');
   if (!lastId) return;
-  try {
-    const res = await fetch(`${API}/conversation/${lastId}/messages`);
-    const data = await res.json();
-    if (data.code === '0000' && data.data?.messages?.length > 0) {
-      state.conversationId = lastId;
-      renderHistory(data.data.messages);
-      log('SYS', `已恢复上次对话（${data.data.messages.length} 条消息）`, 'sys');
-    }
-  } catch (e) { /* 静默失败，不影响新对话 */ }
+  state.conversationId = lastId;
+  await loadAndRenderMessages(lastId);
 }
 
 function renderHistory(messages) {

@@ -17,3 +17,4 @@ class AgentDeps:
     allow_sudo: bool = True                  # 权限控制：是否允许 sudo
     max_command_timeout: int = 300           # 限制单命令最长执行时间
     last_command_failed: bool = False        # 规则层：跟踪上次命令是否失败（单轮内有效，用于自动记 solution）
+    workspace_path: str | None = None        # 当前工作区路径（从 shell 真实 cwd 观测得到，非声明）

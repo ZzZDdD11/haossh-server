@@ -64,6 +64,7 @@ class Conversation(SQLModel, table=True):
     title: str | None = None                               # 列表展示用
     status: str = Field(default="active", index=True)      # active / completed
     task_summary: str | None = None                        # 任务简述（完成时填充）
+    workspace_path: str | None = None                       # 当前任务所在目录（从 shell 真实 cwd 观测得到，非声明）
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 

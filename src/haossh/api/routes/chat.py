@@ -103,6 +103,10 @@ async def chat_stream(req: ChatRequest):
         if req.conversation_id:
             conv_id = req.conversation_id
             history = await repo_conversation.get_messages(conv_id)
+            # 读入历史工作区路径，供持久 shell 崩溃重建时自动 cd 恢复
+            conv = await repo_conversation.get_conversation(conv_id)
+            if conv and conv.workspace_path:
+                deps.workspace_path = conv.workspace_path
             logger.info("续聊 conversation_id=%s 历史消息数=%d", conv_id[:12], len(history))
         else:
             conv = Conversation(

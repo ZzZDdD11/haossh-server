@@ -71,6 +71,17 @@ async def update_conversation_status(conv_id: str, status: str, task_summary: st
         await session.commit()
 
 
+async def update_workspace(conv_id: str, path: str) -> None:
+    """更新对话的工作区路径（从持久 shell 的真实 cwd 观测得到）。"""
+    async with session_maker() as session:
+        conv = await session.get(Conversation, conv_id)
+        if not conv or conv.workspace_path == path:
+            return  # 不存在或未变化，不写库
+        conv.workspace_path = path
+        conv.updated_at = _now_iso()
+        await session.commit()
+
+
 async def delete_conversation(conv_id: str) -> bool:
     """删除对话及其全部消息（级联）。"""
     async with session_maker() as session:
