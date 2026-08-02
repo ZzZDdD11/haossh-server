@@ -1,14 +1,47 @@
 const API = location.origin + '/api/v1';
+const $ = id => document.getElementById(id);
+const el = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+
+// ── 登录态守卫 ─────────────────────────────────
+// 身份完全由 httpOnly Cookie + 后端中间件保证（未登录访问 /api/* 会 401），
+// 这里只是前端体验层面的守卫：没登录就别看到主界面，尽快跳回登录页。
+(async function requireAuth() {
+  try {
+    const res = await fetch(`${API}/auth/me`);
+    const data = await res.json();
+    if (data.code !== '0000') { location.href = '/login.html'; return; }
+    $('userEmail').textContent = data.data.email;
+    $('userInfo').style.display = '';
+  } catch (e) {
+    location.href = '/login.html';
+  }
+})();
+
+$('logoutBtn').onclick = async () => {
+  try { await fetch(`${API}/auth/logout`, { method: 'POST' }); } catch (e) { /* 忽略 */ }
+  location.href = '/login.html';
+};
+
 const state = {
   connectionId: null,
   conversationId: null,
   savedConnectionId: null,
   connected: false,
   streaming: false,
+  term: null,
+  fitAddon: null,
+  termWs: null,
+  termConnectionId: null,
+  termCols: null,
+  termRows: null,
 };
 
-const $ = id => document.getElementById(id);
-const el = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+// 顶栏 UTC 时钟（NOC 控制台标配）
+function tickClock() {
+  $('clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC';
+}
+tickClock();
+setInterval(tickClock, 1000);
 
 function now() {
   const d = new Date();
@@ -34,6 +67,7 @@ function setStatus(s) {
 
 function log(tag, content, type = '') {
   const body = $('logBody');
+  if (!body) return;  // stream log 面板已被终端 widget 取代，这里静默跳过
   const empty = body.querySelector('.log-empty');
   if (empty) empty.remove();
 
@@ -58,16 +92,174 @@ function log(tag, content, type = '') {
   body.scrollTop = body.scrollHeight;
 }
 
-$('clearLog').onclick = () => {
-  $('logBody').innerHTML = '<div class="log-empty">等待事件流...</div>';
-};
+// ── 实时终端（xterm.js + WebSocket）─────────────────
+// 人在浏览器里直接操作的真 PTY 终端；AI 执行命令时也会把命令/结果"打印"进这里
+// （复用现有 SSE 事件渲染，不是同一个 shell 进程，仅视觉拼接，见 sendMessage 里的处理）。
+function initTerminal() {
+  state.term = new Terminal({
+    convertEol: true,
+    fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+    fontSize: 12,
+    theme: {
+      background: '#05080a',
+      foreground: '#c7d3dc',
+      cursor: '#3ddc84',
+      selectionBackground: 'rgba(61, 220, 132, 0.25)',
+    },
+    scrollback: 2000,
+  });
+  state.fitAddon = window.FitAddon ? new FitAddon.FitAddon() : null;
+  if (state.fitAddon) state.term.loadAddon(state.fitAddon);
+  state.term.open($('terminalContainer'));
+  fitTerminal();
+  showTerminalPlaceholder('未连接 SSH，连接后可在此直接操作终端');
+
+  state.term.onData(data => {
+    sendTerminalMessage({ type: 'input', data });
+  });
+}
+
+function sendTerminalMessage(msg) {
+  if (state.termWs && state.termWs.readyState === WebSocket.OPEN) {
+    state.termWs.send(JSON.stringify(msg));
+  }
+}
+
+function sendTerminalResize() {
+  if (!state.fitAddon) return;
+  const dims = state.fitAddon.proposeDimensions();
+  if (!dims || (dims.cols === state.termCols && dims.rows === state.termRows)) return;
+  state.termCols = dims.cols;
+  state.termRows = dims.rows;
+  sendTerminalMessage({ type: 'resize', cols: dims.cols, rows: dims.rows });
+}
+
+function fitTerminal() {
+  if (!state.fitAddon) return;
+  requestAnimationFrame(() => {
+    state.fitAddon.fit();
+    sendTerminalResize();
+  });
+}
+
+function showTerminalPlaceholder(text) {
+  hideTerminalPlaceholder();
+  const ph = el('div', 'terminal-placeholder');
+  ph.id = 'terminalPlaceholder';
+  ph.textContent = text;
+  $('terminalContainer').appendChild(ph);
+}
+
+function hideTerminalPlaceholder() {
+  document.getElementById('terminalPlaceholder')?.remove();
+}
+
+function setTermStatus(s) {
+  const el2 = $('termStatus');
+  el2.textContent = s;
+  el2.classList.toggle('connected', s === 'connected');
+}
+
+function openTerminalWs(connectionId) {
+  closeTerminalWs();
+  if (!connectionId) return;
+  state.termConnectionId = connectionId;
+  hideTerminalPlaceholder();
+  state.term.clear();
+  setTermStatus('connecting...');
+
+  const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
+    + '/api/v1/ssh/terminal/ws?connectionId=' + encodeURIComponent(connectionId);
+  const ws = new WebSocket(wsUrl);
+  ws.onopen = () => {
+    setTermStatus('connected');
+    fitTerminal();
+  };
+  ws.onmessage = (ev) => state.term.write(ev.data);
+  ws.onclose = (ev) => {
+    setTermStatus('disconnected');
+    state.term.write('\r\n\x1b[31m[终端已断开' + (ev.reason ? ': ' + ev.reason : '') + ']\x1b[0m\r\n');
+  };
+  ws.onerror = () => setTermStatus('error');
+  state.termWs = ws;
+}
+
+function closeTerminalWs() {
+  if (state.termWs) {
+    state.termWs.onclose = null;  // 主动关闭，不触发上面那条断开提示
+    state.termWs.close();
+    state.termWs = null;
+  }
+  state.termConnectionId = null;
+  state.termCols = null;
+  state.termRows = null;
+  if (state.term) {
+    state.term.clear();
+    showTerminalPlaceholder('未连接 SSH，连接后可在此直接操作终端');
+    setTermStatus('not connected');
+  }
+}
+
+// AI 执行命令的过程"打印"进终端 widget（视觉拼接，不是真实 PTY 字符流，见方案说明）
+function writeAiCommandToTerm(toolName, args) {
+  if (!state.term) return;
+  const argStr = typeof args === 'string' ? args : JSON.stringify(args);
+  state.term.write('\r\n\x1b[36m[AI] $ ' + toolName + ' ' + argStr + '\x1b[0m\r\n');
+}
+function writeAiResultToTerm(result, ok) {
+  if (!state.term) return;
+  const color = ok ? '\x1b[90m' : '\x1b[31m';
+  state.term.write(color + '── \r\n' + String(result || '') + '\r\n──\x1b[0m\r\n');
+}
+
+$('clearTerm').onclick = () => state.term?.clear();
+
+function initTerminalResize() {
+  const handle = $('terminalResizeHandle');
+  const panel = document.querySelector('.terminal-panel');
+  const split = document.querySelector('.split-panel');
+  const saved = localStorage.getItem('terminalHeight');
+  if (saved) {
+    panel.style.flexBasis = saved;
+    fitTerminal();
+  }
+
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    document.body.classList.add('resizing-terminal');
+
+    const onMove = (ev) => {
+      const rect = split.getBoundingClientRect();
+      const min = 180;
+      const max = Math.floor(rect.height * 0.75);
+      const height = Math.max(min, Math.min(max, rect.bottom - ev.clientY));
+      panel.style.flexBasis = height + 'px';
+      localStorage.setItem('terminalHeight', panel.style.flexBasis);
+      fitTerminal();
+    };
+
+    const onUp = () => {
+      document.body.classList.remove('resizing-terminal');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+
+  window.addEventListener('resize', fitTerminal);
+}
+
+initTerminal();
+initTerminalResize();
 
 // ── 历史对话 ─────────────────────────────────
 let _conversations = [];
 
 async function loadConversationList() {
   try {
-    const res = await fetch(`${API}/conversation/list?userId=default`);
+    const res = await fetch(`${API}/conversation/list`);
     const data = await res.json();
     if (data.code === '0000' && Array.isArray(data.data) && data.data.length > 0) {
       _conversations = data.data;
@@ -144,8 +336,11 @@ async function switchConversation(convId) {
     if (ok) {
       log('SYS', 'SSH 连接已恢复（来自历史对话）', 'sys');
     } else {
+      closeTerminalWs();  // 恢复失败（连接已断开），终端也不该连着旧的
       log('SYS', '该对话关联的 SSH 连接已断开，如需操作请重新连接', 'sys');
     }
+  } else {
+    closeTerminalWs();  // 这个对话没绑定 SSH 连接，终端也不该保留上一个对话的连接
   }
 }
 
@@ -154,7 +349,7 @@ $('newConvBtn').onclick = () => {
   localStorage.removeItem('lastConversationId');
   renderConvList();
   const msgs = $('messages');
-  msgs.innerHTML = '<div class="empty-state" id="emptyState"><div class="glyph">[ ]</div><div class="hint">向运维 Agent 描述你的需求。连接 SSH 后可直接执行命令；未连接时可咨询运维问题。</div></div>';
+  msgs.innerHTML = '<div class="empty-state" id="emptyState"><div class="glyph">&gt;_</div><div class="hint">向运维 Agent 描述你的需求。连接 SSH 后可直接执行命令；未连接时可咨询运维问题。</div></div>';
   log('SYS', '已新建对话', 'sys');
 };
 
@@ -163,7 +358,7 @@ let _savedConnections = [];
 
 async function loadConnections() {
   try {
-    const res = await fetch(`${API}/ssh/connection_list?userId=default`);
+    const res = await fetch(`${API}/ssh/connection_list`);
     const data = await res.json();
     if (data.code === '0000' && data.data && data.data.length > 0) {
       _savedConnections = data.data;
@@ -221,6 +416,7 @@ async function connect() {
         $('connectBtn').disabled = false;
         $('disconnectBtn').disabled = false;
         $('chatInput').focus();
+        openTerminalWs(state.connectionId);
         log('RES', `connectionId=${state.connectionId}`, 'res');
         log('SYS', 'SSH 连接已建立（从历史记录）', 'sys');
       } else {
@@ -270,6 +466,7 @@ async function connect() {
       $('chatInput').disabled = false;
       $('sendBtn').disabled = false;
       $('chatInput').focus();
+      openTerminalWs(state.connectionId);
       log('RES', `connectionId=${state.connectionId}`, 'res');
       log('SYS', 'SSH 连接已建立，工具已对 Agent 可见', 'sys');
     } else {
@@ -300,6 +497,7 @@ function resetConn() {
   localStorage.removeItem('lastConnectionId');
   state.connected = false;
   setStatus('disconnected');
+  closeTerminalWs();
   $('connIdDisplay').style.display = 'none';
   $('connectBtn').disabled = false;
   $('disconnectBtn').disabled = true;
@@ -446,6 +644,7 @@ async function sendMessage() {
           card.appendChild(hdr); card.appendChild(body);
           bubble.appendChild(card);
           toolCards[evt.call_id] = card;
+          writeAiCommandToTerm(evt.tool, evt.args);
           log('TOOL', `${evt.tool}(${JSON.stringify(evt.args).slice(0, 80)})`, 'sys');
         } else if (evt.type === 'tool_result') {
           const card = toolCards[evt.call_id];
@@ -475,6 +674,7 @@ async function sendMessage() {
             c2.appendChild(h2); c2.appendChild(b2);
             bubble.appendChild(c2);
           }
+          writeAiResultToTerm(evt.result, ok);
           log('TOOL', `${evt.tool} → ${(evt.result || '').slice(0, 100)}`, ok ? 'res' : 'err');
         } else if (evt.type === 'done') {
           if (evt.conversation_id) {
@@ -487,7 +687,10 @@ async function sendMessage() {
           ensureText().textContent += '⚠ ' + evt.message;
           log('ERR', evt.message, 'err');
         }
-        msgs.scrollTop = msgs.scrollHeight;
+        // 用户贴近底部时才自动跟随滚动；已主动上移查看历史则不打扰
+        if (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120) {
+          msgs.scrollTop = msgs.scrollHeight;
+        }
       }
     }
 
@@ -567,6 +770,9 @@ async function restoreConnectionUI(connId) {
         $('info-user').textContent = connData.data.username;
         $('info-port').textContent = connData.data.port;
       }
+      if (state.termConnectionId !== connId) {
+        openTerminalWs(connId);
+      }
       return true;
     }
   } catch (e) { /* 静默失败 */ }
@@ -611,7 +817,7 @@ function renderHistory(messages) {
     if (msg.role === 'user') {
       appendMessage('user', msg.content);
     } else {
-      const { m, bubble } = createAiMessage();
+      const { bubble } = createAiMessage();
       if (msg.content) {
         const text = el('div', 'text-content');
         text.textContent = msg.content;

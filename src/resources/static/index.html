@@ -6,20 +6,26 @@
 <title>haossh // debug console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="scanline"></div>
 
 <header class="topbar">
-  <div class="brand">haossh<span class="slash">//</span><span class="sub">debug console</span></div>
+  <div class="brand">haossh<span class="slash">//</span><span class="sub">ops console</span></div>
+  <div class="clock"><span class="val" id="clock">--:--:-- UTC</span></div>
   <div class="conn-id" id="connIdDisplay" style="display:none;">
     <span class="label">session</span><span class="val" id="connIdVal">—</span>
   </div>
   <div class="status-pill">
     <span class="status-dot" id="statusDot"></span>
     <span class="status-text" id="statusText">disconnected</span>
+  </div>
+  <div class="user-info" id="userInfo" style="display:none;">
+    <span class="user-email" id="userEmail">—</span>
+    <button class="logout-btn" id="logoutBtn">logout</button>
   </div>
 </header>
 
@@ -78,37 +84,41 @@
     </div>
   </aside>
 
-  <!-- 中栏：对话 -->
-  <section class="panel chat-panel">
-    <div class="panel-header">
-      <div class="panel-title"><span class="num">02</span>conversation</div>
-    </div>
-    <div class="messages" id="messages">
+  <!-- 右侧：对话 + 终端，上下分层 -->
+  <section class="split-panel">
+    <div class="panel chat-panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="num">02</span>conversation</div>
+      </div>
+      <div class="messages" id="messages">
       <div class="empty-state" id="emptyState">
-        <div class="glyph">[ ]</div>
+        <div class="glyph">&gt;_</div>
         <div class="hint">向运维 Agent 描述你的需求。连接 SSH 后可直接执行命令；未连接时可咨询运维问题。</div>
       </div>
+      </div>
+      <div class="chat-input-wrap">
+        <textarea class="chat-input" id="chatInput" placeholder="描述你的运维需求，例如：看一下磁盘使用情况" rows="1"></textarea>
+        <button class="send-btn" id="sendBtn">send</button>
+      </div>
     </div>
-    <div class="chat-input-wrap">
-      <textarea class="chat-input" id="chatInput" placeholder="描述你的运维需求，例如：看一下磁盘使用情况" rows="1"></textarea>
-      <button class="send-btn" id="sendBtn">send</button>
+
+    <div class="terminal-resize-handle" id="terminalResizeHandle" title="拖动调整终端高度"></div>
+
+    <div class="panel terminal-panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="num">03</span>terminal</div>
+        <span class="term-status" id="termStatus">not connected</span>
+        <button class="clear-log" id="clearTerm">clear</button>
+      </div>
+      <div class="terminal-body" id="terminalContainer"></div>
     </div>
   </section>
-
-  <!-- 右栏：流日志 -->
-  <aside class="panel log-panel">
-    <div class="panel-header">
-      <div class="panel-title"><span class="num">03</span>stream log</div>
-      <button class="clear-log" id="clearLog">clear</button>
-    </div>
-    <div class="panel-body log-body" id="logBody">
-      <div class="log-empty">等待事件流...</div>
-    </div>
-  </aside>
 </main>
 
 <div class="toast" id="toast"></div>
 
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/xterm-addon-fit.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

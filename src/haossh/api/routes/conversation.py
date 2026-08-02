@@ -1,12 +1,14 @@
 """对话历史 API。
 
 提供获取对话历史消息的接口，用于前端刷新页面后恢复对话上下文。
+多租户隔离：所有查询/操作都从 request.state.tenant_id 取身份，
+不再信任前端传的 userId 参数，且通过 repo 层的 owned 方法校验归属。
 """
 
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from haossh.db import repo_conversation
 
@@ -21,6 +23,55 @@ def _ok(data=None):
 
 def _err(info: str):
     return {"code": "1001", "info": info, "data": None}
+
+
+@router.get("/{conv_id}/messages")
+async def get_conversation_messages(conv_id: str, request: Request):
+    """获取对话的历史消息（前端可渲染格式）。"""
+    tenant_id = request.state.tenant_id
+    conv = await repo_conversation.get_conversation_owned(conv_id, tenant_id)
+    if not conv:
+        return _err(f"对话不存在: {conv_id}")
+    messages = await repo_conversation.get_messages(conv_id)
+    return _ok({"conversation_id": conv_id, "messages": _messages_to_dto(messages)})
+
+
+@router.get("/list")
+async def list_conversations(request: Request):
+    """列出当前登录租户的对话（含状态和任务简述）。"""
+    tenant_id = request.state.tenant_id
+    convs = await repo_conversation.list_conversations(tenant_id)
+    return _ok([
+        {
+            "conversation_id": c.id,
+            "title": c.title,
+            "status": c.status,
+            "task_summary": c.task_summary,
+            "connection_id": c.connection_id,
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        for c in convs
+    ])
+
+
+@router.post("/{conv_id}/terminate")
+async def terminate_conversation(conv_id: str, request: Request):
+    """手动终止对话：将状态标记为 completed。
+
+    用于用户主动结束一个任务型对话（不再需要 agent 继续跟进），
+    与 agent 自己通过 record_milestone(done) 完成任务是同一个状态字段，
+    只是触发来源不同（用户主动 vs agent 判断任务已完成）。
+    """
+    tenant_id = request.state.tenant_id
+    conv = await repo_conversation.get_conversation_owned(conv_id, tenant_id)
+    if not conv:
+        return _err(f"对话不存在: {conv_id}")
+    if conv.status == "completed":
+        return _ok({"conversation_id": conv_id, "status": "completed"})
+    await repo_conversation.update_conversation_status(conv_id, tenant_id, "completed")
+    logger.info("对话已手动终止 conversation_id=%s", conv_id[:12])
+    return _ok({"conversation_id": conv_id, "status": "completed"})
 
 
 def _messages_to_dto(messages) -> list[dict]:
@@ -86,49 +137,3 @@ def _messages_to_dto(messages) -> list[dict]:
             })
 
     return result
-
-
-@router.get("/{conv_id}/messages")
-async def get_conversation_messages(conv_id: str):
-    """获取对话的历史消息（前端可渲染格式）。"""
-    messages = await repo_conversation.get_messages(conv_id)
-    if not messages:
-        return _err(f"对话不存在或无消息: {conv_id}")
-    return _ok({"conversation_id": conv_id, "messages": _messages_to_dto(messages)})
-
-
-@router.get("/list")
-async def list_conversations(userId: str = "default"):
-    """列出用户的对话（含状态和任务简述）。"""
-    from fastapi import Query
-    convs = await repo_conversation.list_conversations(userId)
-    return _ok([
-        {
-            "conversation_id": c.id,
-            "title": c.title,
-            "status": c.status,
-            "task_summary": c.task_summary,
-            "connection_id": c.connection_id,
-            "created_at": c.created_at,
-            "updated_at": c.updated_at,
-        }
-        for c in convs
-    ])
-
-
-@router.post("/{conv_id}/terminate")
-async def terminate_conversation(conv_id: str):
-    """手动终止对话：将状态标记为 completed。
-
-    用于用户主动结束一个任务型对话（不再需要 agent 继续跟进），
-    与 agent 自己通过 record_milestone(done) 完成任务是同一个状态字段，
-    只是触发来源不同（用户主动 vs agent 判断任务已完成）。
-    """
-    conv = await repo_conversation.get_conversation(conv_id)
-    if not conv:
-        return _err(f"对话不存在: {conv_id}")
-    if conv.status == "completed":
-        return _ok({"conversation_id": conv_id, "status": "completed"})
-    await repo_conversation.update_conversation_status(conv_id, "completed")
-    logger.info("对话已手动终止 conversation_id=%s", conv_id[:12])
-    return _ok({"conversation_id": conv_id, "status": "completed"})

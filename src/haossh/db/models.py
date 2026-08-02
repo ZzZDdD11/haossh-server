@@ -1,13 +1,16 @@
 """SQLModel 表定义。
 
-三张表，关系：
-  ssh_connections 1 ── ∞ conversations 1 ── ∞ messages
+表关系：
+  tenants 1 ── ∞ users
+  tenants 1 ── ∞ ssh_connections 1 ── ∞ conversations 1 ── ∞ messages
 
 设计要点：
 - table=True 的模型既是数据库表，也兼容 pydantic 校验
 - 时间戳用 ISO 字符串存（与现有代码风格一致），避免 datetime 序列化复杂度
 - secret_enc 存 Fernet 加密后的 bytes，明文绝不落库
 - connection_id 可空：纯聊天场景（未连 SSH）也能有对话
+- tenant_id 是多租户隔离边界：SSHConnection/Conversation 的所有查询必须带
+  tenant_id 条件（见 repo_connection.py/repo_conversation.py 的 get_owned 系列方法）
 """
 
 from datetime import datetime, timezone
@@ -20,6 +23,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class Tenant(SQLModel, table=True):
+    """租户（组织）。多租户数据隔离的边界，所有业务数据最终按 tenant_id 归属。"""
+    __tablename__ = "tenants"
+
+    id: str = Field(primary_key=True)                      # uuid hex
+    name: str                                              # 组织展示名
+    plan: str = Field(default="free")                      # 预留：free/pro，暂不使用
+    created_at: str = Field(default_factory=_now_iso)
+
+
+class User(SQLModel, table=True):
+    """用户。归属唯一一个租户（MVP 不支持跨租户共享账号，也暂不支持邀请成员）。"""
+    __tablename__ = "users"
+
+    id: str = Field(primary_key=True)                      # uuid hex
+    tenant_id: str = Field(foreign_key="tenants.id", index=True)
+    email: str = Field(unique=True, index=True)            # 登录账号，业务层统一转小写存取
+    password_hash: str                                     # argon2 哈希，明文绝不落库
+    role: str = Field(default="owner")                     # MVP 阶段注册者必为 owner
+    created_at: str = Field(default_factory=_now_iso)
+
+
 class SSHConnection(SQLModel, table=True):
     """SSH 连接元信息。
 
@@ -29,7 +54,8 @@ class SSHConnection(SQLModel, table=True):
     __tablename__ = "ssh_connections"
 
     id: str = Field(primary_key=True)                      # uuid hex
-    user_id: str = Field(default="default", index=True)    # 按用户查列表
+    tenant_id: str = Field(foreign_key="tenants.id", index=True)   # 隔离边界
+    user_id: str = Field(foreign_key="users.id", index=True)       # 创建者
     name: str                                              # 连接名称
     host: str
     port: int = 22
@@ -57,7 +83,8 @@ class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
 
     id: str = Field(primary_key=True)                      # uuid hex
-    user_id: str = Field(default="default", index=True)
+    tenant_id: str = Field(foreign_key="tenants.id", index=True)   # 隔离边界
+    user_id: str = Field(foreign_key="users.id", index=True)       # 创建者
     connection_id: str | None = Field(
         default=None, foreign_key="ssh_connections.id", index=True
     )
@@ -75,6 +102,9 @@ class Message(SQLModel, table=True):
     pydantic-ai 的 ModelMessage 序列化成 JSON 存 content_json。
     seq 用于保证顺序；读取时 ORDER BY seq 还原成 list[ModelMessage]。
     role 是简化角色（user/model），便于查询统计；完整结构在 content_json 里。
+
+    没有单独的 tenant_id：归属通过 conversation_id 间接确定，且从不被前端
+    直接按 message id 查询/操作，不需要重复冗余隔离字段。
     """
     __tablename__ = "messages"
 

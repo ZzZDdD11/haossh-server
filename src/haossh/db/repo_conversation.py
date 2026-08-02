@@ -6,6 +6,9 @@
   - 写：每条消息 model_dump_json 后存一行，seq 递增
   - 读：按 seq 排序，逐行 validate_json 还原成 list[ModelMessage]
 - 删除对话时级联删除其消息（SQLite 默认不强制外键，手动删）
+- 多租户隔离：对话相关的查询/更新/删除都强制传入 tenant_id 并校验归属，
+  不提供裸查询方法（同 repo_connection.py 的设计原则）。消息/里程碑通过
+  conversation_id 间接归属，不重复冗余 tenant_id 字段。
 """
 
 from pydantic import TypeAdapter
@@ -31,18 +34,23 @@ async def create_conversation(conv: Conversation) -> Conversation:
         return conv
 
 
-async def get_conversation(conv_id: str) -> Conversation | None:
-    """查单个对话。"""
+async def get_conversation_owned(conv_id: str, tenant_id: str) -> Conversation | None:
+    """查单个对话，同时校验归属租户。不属于该租户返回 None。"""
     async with session_maker() as session:
-        return await session.get(Conversation, conv_id)
+        stmt = select(Conversation).where(
+            Conversation.id == conv_id,
+            Conversation.tenant_id == tenant_id,
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
 
-async def list_conversations(user_id: str) -> list[Conversation]:
-    """列某用户的对话，按更新时间倒序。"""
+async def list_conversations(tenant_id: str) -> list[Conversation]:
+    """列某租户的对话，按更新时间倒序。"""
     async with session_maker() as session:
         stmt = (
             select(Conversation)
-            .where(Conversation.user_id == user_id)
+            .where(Conversation.tenant_id == tenant_id)
             .order_by(Conversation.updated_at.desc())
         )
         result = await session.execute(stmt)
@@ -50,7 +58,10 @@ async def list_conversations(user_id: str) -> list[Conversation]:
 
 
 async def update_conversation(conv: Conversation) -> Conversation:
-    """更新对话（如改 connection_id / title）。"""
+    """更新对话（如改 connection_id / title）。
+
+    调用方需先用 get_conversation_owned 校验过归属再改字段传进来。
+    """
     async with session_maker() as session:
         merged = await session.merge(conv)
         await session.commit()
@@ -58,21 +69,32 @@ async def update_conversation(conv: Conversation) -> Conversation:
         return merged
 
 
-async def update_conversation_status(conv_id: str, status: str, task_summary: str | None = None) -> None:
-    """更新对话状态（active/completed）。"""
+async def update_conversation_status(
+    conv_id: str, tenant_id: str, status: str, task_summary: str | None = None
+) -> bool:
+    """更新对话状态（active/completed），同时校验归属租户。返回是否更新成功。"""
     async with session_maker() as session:
-        conv = await session.get(Conversation, conv_id)
+        stmt = select(Conversation).where(
+            Conversation.id == conv_id,
+            Conversation.tenant_id == tenant_id,
+        )
+        conv = (await session.execute(stmt)).scalar_one_or_none()
         if not conv:
-            return
+            return False
         conv.status = status
         if task_summary:
             conv.task_summary = task_summary
         conv.updated_at = _now_iso()
         await session.commit()
+        return True
 
 
 async def update_workspace(conv_id: str, path: str) -> None:
-    """更新对话的工作区路径（从持久 shell 的真实 cwd 观测得到）。"""
+    """更新对话的工作区路径（从持久 shell 的真实 cwd 观测得到）。
+
+    调用方（agent 工具内部）已经持有校验过归属的 conv_id（来自 deps.conversation_id），
+    这里不重复查 tenant_id——属于系统内部可信调用，不是前端直接可达的接口。
+    """
     async with session_maker() as session:
         conv = await session.get(Conversation, conv_id)
         if not conv or conv.workspace_path == path:
@@ -82,10 +104,14 @@ async def update_workspace(conv_id: str, path: str) -> None:
         await session.commit()
 
 
-async def delete_conversation(conv_id: str) -> bool:
-    """删除对话及其全部消息（级联）。"""
+async def delete_conversation_owned(conv_id: str, tenant_id: str) -> bool:
+    """删除对话及其全部消息（级联），同时校验归属租户。"""
     async with session_maker() as session:
-        conv = await session.get(Conversation, conv_id)
+        stmt = select(Conversation).where(
+            Conversation.id == conv_id,
+            Conversation.tenant_id == tenant_id,
+        )
+        conv = (await session.execute(stmt)).scalar_one_or_none()
         if conv is None:
             return False
         # 先删关联消息
@@ -96,6 +122,9 @@ async def delete_conversation(conv_id: str) -> bool:
 
 
 # ===== 消息读写 =====
+# 注：消息按 conversation_id 归属，不直接暴露给前端按 id 查询，不需要重复
+# 校验 tenant_id——调用方（chat.py）已经通过 get_conversation_owned 校验过
+# conv_id 归属，才会拿着它来读写消息。
 
 async def append_messages(conv_id: str, messages: list[ModelMessage]) -> None:
     """把新增消息追加到 messages 表。seq 从当前最大值+1 开始递增。"""

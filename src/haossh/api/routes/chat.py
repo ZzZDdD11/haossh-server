@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
@@ -16,6 +16,88 @@ from haossh.db.models import Conversation
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+
+@router.post("/chat_stream")
+async def chat_stream(req: ChatRequest, request: Request):
+    tenant_id = request.state.tenant_id
+    user_id = request.state.user_id
+    deps = AgentDeps(
+        session_id=req.session_id,
+        terminal_session_id=req.terminal_session_id,
+        allow_sudo=True,
+    )
+
+    async def generator():
+        # 确定对话 ID：传了就复用，没传就新建
+        if req.conversation_id:
+            # 校验归属：不能续聊别的租户的对话
+            conv = await repo_conversation.get_conversation_owned(req.conversation_id, tenant_id)
+            if not conv:
+                yield _sse({"type": "error", "message": "对话不存在或无权访问"})
+                yield _sse({"type": "done", "conversation_id": req.conversation_id})
+                return
+            conv_id = req.conversation_id
+            history = await repo_conversation.get_messages(conv_id)
+            # 读入历史工作区路径，供持久 shell 崩溃重建时自动 cd 恢复
+            if conv.workspace_path:
+                deps.workspace_path = conv.workspace_path
+            # session_id 兜底：前端未传（如服务重启后 is_connected 返回 false，
+            # 未走恢复流程）时，用该对话本身绑定的 connection_id 兜底——
+            # 这样 require_connection/get_session 现有的 DB 自动重连机制才能接上，
+            # 不会出现"工具集体消失但连接其实能重连"的问题（见 troubleshooting/016）
+            if not deps.session_id and conv.connection_id:
+                deps.session_id = conv.connection_id
+                logger.info("session_id 未传，回退到对话绑定的 connection_id=%s", conv.connection_id[:12])
+            logger.info("续聊 conversation_id=%s 历史消息数=%d", conv_id[:12], len(history))
+        else:
+            conv = Conversation(
+                id=uuid.uuid4().hex,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                connection_id=req.session_id or None,
+            )
+            await repo_conversation.create_conversation(conv)
+            conv_id = conv.id
+            history = []
+            # 规则层：新对话首轮自动记录 task_start，保留任务原始意图（防上下文裁剪丢失）
+            await repo_conversation.append_milestone(conv_id, "task_start", req.message[:100])
+            logger.info("新建对话 conversation_id=%s session_id=%s", conv_id[:12], req.session_id[:12] if req.session_id else '空')
+
+        # 设置 conversation_id 到 deps，供 record_milestone 和 milestone_summary 使用
+        deps.conversation_id = conv_id
+
+        try:
+            # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
+            # message_history 传入历史，Agent 才能记得之前聊过什么
+            async with agent.iter(
+                req.message,
+                deps=deps,
+                message_history=history,
+                usage_limits=UsageLimits(request_limit=200),
+            ) as run:
+                async for node in run:
+                    # ModelRequestNode: 模型流式响应（text/thinking 片段）
+                    # CallToolsNode:    工具调用执行（tool_call/tool_result）
+                    if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            async for event in stream:
+                                payload = _event_to_payload(event)
+                                if payload is not None:
+                                    yield _sse(payload)
+            # 存本轮新增消息（增量追加，不覆盖）
+            await repo_conversation.append_messages(conv_id, run.new_messages())
+        except Exception as e:
+            logger.exception("chat_stream 执行异常 conversation_id=%s", conv_id)
+            yield _sse({"type": "error", "message": str(e)})
+        # done 事件带上 conversation_id，前端后续请求带上即可续聊
+        yield _sse({"type": "done", "conversation_id": conv_id})
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+    )
 
 
 def _sse(payload: dict) -> str:
@@ -88,75 +170,3 @@ def _event_to_payload(event) -> dict | None:
 
     # part_end / final_result / enqueued_messages 等暂不推
     return None
-
-
-@router.post("/chat_stream")
-async def chat_stream(req: ChatRequest):
-    deps = AgentDeps(
-        session_id=req.session_id,
-        terminal_session_id=req.terminal_session_id,
-        allow_sudo=True,
-    )
-
-    async def generator():
-        # 确定对话 ID：传了就复用，没传就新建
-        if req.conversation_id:
-            conv_id = req.conversation_id
-            history = await repo_conversation.get_messages(conv_id)
-            # 读入历史工作区路径，供持久 shell 崩溃重建时自动 cd 恢复
-            conv = await repo_conversation.get_conversation(conv_id)
-            if conv and conv.workspace_path:
-                deps.workspace_path = conv.workspace_path
-            # session_id 兜底：前端未传（如服务重启后 is_connected 返回 false，
-            # 未走恢复流程）时，用该对话本身绑定的 connection_id 兜底——
-            # 这样 require_connection/get_session 现有的 DB 自动重连机制才能接上，
-            # 不会出现"工具集体消失但连接其实能重连"的问题（见 troubleshooting/016）
-            if not deps.session_id and conv and conv.connection_id:
-                deps.session_id = conv.connection_id
-                logger.info("session_id 未传，回退到对话绑定的 connection_id=%s", conv.connection_id[:12])
-            logger.info("续聊 conversation_id=%s 历史消息数=%d", conv_id[:12], len(history))
-        else:
-            conv = Conversation(
-                id=uuid.uuid4().hex,
-                connection_id=req.session_id or None,
-            )
-            await repo_conversation.create_conversation(conv)
-            conv_id = conv.id
-            history = []
-            # 规则层：新对话首轮自动记录 task_start，保留任务原始意图（防上下文裁剪丢失）
-            await repo_conversation.append_milestone(conv_id, "task_start", req.message[:100])
-            logger.info("新建对话 conversation_id=%s session_id=%s", conv_id[:12], req.session_id[:12] if req.session_id else '空')
-
-        # 设置 conversation_id 到 deps，供 record_milestone 和 milestone_summary 使用
-        deps.conversation_id = conv_id
-
-        try:
-            # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
-            # message_history 传入历史，Agent 才能记得之前聊过什么
-            async with agent.iter(
-                req.message,
-                deps=deps,
-                message_history=history,
-                usage_limits=UsageLimits(request_limit=200),
-            ) as run:
-                async for node in run:
-                    # ModelRequestNode: 模型流式响应（text/thinking 片段）
-                    # CallToolsNode:    工具调用执行（tool_call/tool_result）
-                    if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                        async with node.stream(run.ctx) as stream:
-                            async for event in stream:
-                                payload = _event_to_payload(event)
-                                if payload is not None:
-                                    yield _sse(payload)
-            # 存本轮新增消息（增量追加，不覆盖）
-            await repo_conversation.append_messages(conv_id, run.new_messages())
-        except Exception as e:
-            logger.exception("chat_stream 执行异常 conversation_id=%s", conv_id)
-            yield _sse({"type": "error", "message": str(e)})
-        # done 事件带上 conversation_id，前端后续请求带上即可续聊
-        yield _sse({"type": "done", "conversation_id": conv_id})
-
-    return StreamingResponse(
-        generator(),
-        media_type="text/event-stream",
-    )

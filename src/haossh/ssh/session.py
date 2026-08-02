@@ -79,7 +79,7 @@ async def _reconnect(connection_id: str) -> SSHClientConnection:
     from haossh.db import repo_connection
     from haossh.ssh.security import decrypt
 
-    conn_info = await repo_connection.get(connection_id)
+    conn_info = await repo_connection.get_unchecked(connection_id)
     if not conn_info:
         raise ConnectionError(f"SSH 连接已断开且无法重连：{connection_id} 不在数据库中")
 

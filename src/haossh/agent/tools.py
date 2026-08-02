@@ -423,7 +423,7 @@ async def require_connection(
     if not ctx.deps.session_id:
         return None
     from haossh.db import repo_connection
-    if await repo_connection.get(ctx.deps.session_id):
+    if await repo_connection.get_unchecked(ctx.deps.session_id):
         return tool_def
     return None
 

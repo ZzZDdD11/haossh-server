@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # 用于加密 SSH 密码/私钥。务必通过 env 注入，勿提交到代码库
     secret_key: str = ""
 
+    # 多租户认证：JWT 签名密钥，务必通过 env 注入，勿提交到代码库
+    jwt_secret: str = ""
+    jwt_expire_days: int = 7
+
 
 
 settings = Settings()

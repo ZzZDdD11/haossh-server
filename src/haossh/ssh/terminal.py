@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import asyncssh
@@ -58,6 +59,16 @@ def _get(terminal_session_id: str) -> TerminalSession:
     if ts is None:
         raise ValueError(f"终端会话不存在: {terminal_session_id}")
     return ts
+
+
+def get_connection_id(terminal_session_id: str) -> str | None:
+    """按 terminal_session_id 反查它绑定的 connection_id，供路由层做归属校验。
+
+    write/read/resize/close 这几个接口的请求体里没有 connectionId（只有
+    terminalSessionId），要做多租户越权校验，必须先从这里反查出 connection_id。
+    """
+    ts = terminals.get(terminal_session_id)
+    return ts.connection_id if ts else None
 
 
 # ── 公开 API ─────────────────────────────────────────────────
@@ -124,6 +135,26 @@ async def read(terminal_session_id: str, timeout: float = 0.1) -> str:
         buf.clear()
         return result
     return ""
+
+
+async def read_stream(terminal_session_id: str) -> AsyncIterator[str]:
+    """持续等待并产出 PTY 输出，供 WebSocket 场景使用（推送式，不是轮询）。
+
+    跟 read() 的区别：read() 等一小段时间就返回（可能是空），这里是一个
+    无限循环的异步生成器——只要终端还活着，就一直等，一有数据立刻 yield，
+    没有数据就阻塞在这里（不占 CPU，await 在等 I/O），直到连接关闭或终端结束。
+    """
+    ts = _get(terminal_session_id)
+    while ts.terminal_session_id in terminals:
+        buf = ts.client_session._buffer
+        if not buf:
+            await _wait_for_data(ts.client_session)
+        if ts.client_session._eof and not buf:
+            break
+        if buf:
+            data = "".join(buf)
+            buf.clear()
+            yield data
 
 
 async def _wait_for_data(session: _TerminalClientSession, poll_interval: float = 0.02) -> None:

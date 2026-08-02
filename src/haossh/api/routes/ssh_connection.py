@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from haossh.api.schemas.ssh_connection import ConnectRequest, CreateConnectionRequest
 from haossh.db import repo_connection
@@ -56,11 +56,13 @@ def _pick_plain_secret(req: CreateConnectionRequest) -> str | None:
 # ===== CRUD =====
 
 @router.post("/create_connection")
-async def create_connection(req: CreateConnectionRequest):
+async def create_connection(req: CreateConnectionRequest, request: Request):
     """创建 SSH 连接记录（不建立实际连接）。"""
+    tenant_id = request.state.tenant_id
+    user_id = request.state.user_id
     connection_id = req.connection_id or uuid.uuid4().hex
 
-    if await repo_connection.get(connection_id):
+    if await repo_connection.get_owned(connection_id, tenant_id):
         return _err(f"连接已存在: {connection_id}")
 
     plain_secret = _pick_plain_secret(req)
@@ -69,7 +71,8 @@ async def create_connection(req: CreateConnectionRequest):
 
     conn = SSHConnection(
         id=connection_id,
-        user_id=req.user_id,
+        tenant_id=tenant_id,
+        user_id=user_id,
         name=req.connection_name,
         host=req.host,
         port=req.port,
@@ -88,12 +91,13 @@ async def create_connection(req: CreateConnectionRequest):
 
 
 @router.post("/update_connection")
-async def update_connection(req: CreateConnectionRequest):
+async def update_connection(req: CreateConnectionRequest, request: Request):
     """更新 SSH 连接记录。"""
     if not req.connection_id:
         return _err("缺少 connectionId")
 
-    conn = await repo_connection.get(req.connection_id)
+    tenant_id = request.state.tenant_id
+    conn = await repo_connection.get_owned(req.connection_id, tenant_id)
     if not conn:
         return _err(f"连接不存在: {req.connection_id}")
 
@@ -118,19 +122,23 @@ async def update_connection(req: CreateConnectionRequest):
 
 
 @router.post("/delete_connection")
-async def delete_connection(connectionId: str = Query(..., alias="connectionId")):
+async def delete_connection(request: Request, connectionId: str = Query(..., alias="connectionId")):
     """删除 SSH 连接记录。"""
+    tenant_id = request.state.tenant_id
+    if not await repo_connection.get_owned(connectionId, tenant_id):
+        return _err(f"连接不存在: {connectionId}")
     await session.disconnect(connectionId)  # 先断开活跃连接
-    ok = await repo_connection.delete(connectionId)
+    ok = await repo_connection.delete_owned(connectionId, tenant_id)
     if not ok:
         return _err(f"连接不存在: {connectionId}")
     return _ok()
 
 
 @router.get("/get_connection")
-async def get_connection(connectionId: str = Query(..., alias="connectionId")):
+async def get_connection(request: Request, connectionId: str = Query(..., alias="connectionId")):
     """查询单个连接详情。"""
-    conn = await repo_connection.get(connectionId)
+    tenant_id = request.state.tenant_id
+    conn = await repo_connection.get_owned(connectionId, tenant_id)
     if not conn:
         return _err(f"连接不存在: {connectionId}")
     status = 1 if await session.is_connected(connectionId) else 0
@@ -138,9 +146,10 @@ async def get_connection(connectionId: str = Query(..., alias="connectionId")):
 
 
 @router.get("/connection_list")
-async def connection_list(userId: str = Query(default="default", alias="userId")):
-    """查询用户的所有连接。"""
-    conns = await repo_connection.list_by_user(userId)
+async def connection_list(request: Request):
+    """查询当前登录租户的所有连接。"""
+    tenant_id = request.state.tenant_id
+    conns = await repo_connection.list_by_tenant(tenant_id)
     result = []
     for c in conns:
         status = 1 if await session.is_connected(c.id) else 0
@@ -151,10 +160,17 @@ async def connection_list(userId: str = Query(default="default", alias="userId")
 # ===== 连接操作 =====
 
 @router.post("/connect")
-async def connect(req: ConnectRequest = None, connectionId: str = Query(default=None, alias="connectionId")):
+async def connect(
+    request: Request,
+    req: ConnectRequest = None,
+    connectionId: str = Query(default=None, alias="connectionId"),
+):
     """建立 SSH 连接。支持两种模式：1）传 connectionId 从存储读取；2）直接传 host/port/user/pwd。"""
+    tenant_id = request.state.tenant_id
+    user_id = request.state.user_id
+
     if connectionId:
-        conn = await repo_connection.get(connectionId)
+        conn = await repo_connection.get_owned(connectionId, tenant_id)
         if not conn:
             return _err(f"连接不存在: {connectionId}")
         host = conn.host
@@ -181,11 +197,12 @@ async def connect(req: ConnectRequest = None, connectionId: str = Query(default=
     if ok:
         # 表单值连接成功后自动保存到 DB，下次刷新页面可从历史记录一键连接
         if not connectionId:
-            existing = await repo_connection.get(cid)
+            existing = await repo_connection.get_owned(cid, tenant_id)
             if not existing:
                 conn = SSHConnection(
                     id=cid,
-                    user_id="default",
+                    tenant_id=tenant_id,
+                    user_id=user_id,
                     name=f"{username}@{host}",
                     host=host,
                     port=port,
@@ -200,8 +217,11 @@ async def connect(req: ConnectRequest = None, connectionId: str = Query(default=
 
 
 @router.post("/disconnect")
-async def disconnect(connectionId: str = Query(..., alias="connectionId")):
+async def disconnect(request: Request, connectionId: str = Query(..., alias="connectionId")):
     """断开 SSH 连接。"""
+    tenant_id = request.state.tenant_id
+    if not await repo_connection.get_owned(connectionId, tenant_id):
+        return _err(f"连接不存在: {connectionId}")
     ok = await session.disconnect(connectionId)
     if ok:
         return _ok()
@@ -209,7 +229,10 @@ async def disconnect(connectionId: str = Query(..., alias="connectionId")):
 
 
 @router.get("/is_connected")
-async def is_connected(connectionId: str = Query(..., alias="connectionId")):
+async def is_connected(request: Request, connectionId: str = Query(..., alias="connectionId")):
     """检查 SSH 连接状态。"""
+    tenant_id = request.state.tenant_id
+    if not await repo_connection.get_owned(connectionId, tenant_id):
+        return _err(f"连接不存在: {connectionId}")
     alive = await session.is_connected(connectionId)
     return _ok({"connected": alive})

@@ -13,7 +13,6 @@ class CreateConnectionRequest(BaseModel):
     auth_type: int = Field(default=1, alias="authType")  # 1=密码, 2=私钥
     password: str | None = None
     private_key: str | None = Field(default=None, alias="privateKey")
-    user_id: str = Field(default="default", alias="userId")
     connect_timeout: int = Field(default=30, alias="connectTimeout")
     keepalive_interval: int = Field(default=60, alias="keepaliveInterval")
     startup_command: str | None = Field(default=None, alias="startupCommand")
