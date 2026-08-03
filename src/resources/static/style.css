@@ -568,6 +568,19 @@ select.form-input { cursor: pointer; }
 }
 .clear-log:hover { color: var(--green); }
 
+/* 单条 AI 消息的 hover 复制按钮 */
+.msg-copy-btn {
+  margin-left: auto;
+  background: none; border: none;
+  color: var(--fg-mute); cursor: pointer;
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 6px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.message:hover .msg-copy-btn { opacity: 1; }
+.msg-copy-btn:hover { color: var(--green); }
+
 /* ── 提示 ─────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 24px; left: 50%;

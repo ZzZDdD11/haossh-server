@@ -55,6 +55,67 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 2600);
 }
 
+// 一键复制到剪贴板：优先用标准 clipboard API，降级用 execCommand（非 HTTPS/localhost 环境）
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  toast('已复制到剪贴板');
+}
+
+// 从 AI 消息 bubble 提取可复制文本（按 DOM 顺序拼接 text/thinking/tool 三类块）
+function extractMessageText(bubble, { includeThinking = false, includeTools = true } = {}) {
+  if (!bubble) return '';
+  const parts = [];
+  for (const node of bubble.childNodes) {
+    if (node.nodeType !== 1) continue;  // 只处理元素节点
+    if (node.classList.contains('text-content')) {
+      const t = node.textContent.trim();
+      if (t) parts.push(t);
+    } else if (node.classList.contains('thinking-block') && includeThinking) {
+      const c = node.querySelector('.thinking-content')?.textContent.trim();
+      if (c) parts.push(`【思考】\n${c}`);
+    } else if (node.classList.contains('tool-card') && includeTools) {
+      const name = node.querySelector('.tool-name')?.textContent || '';
+      const status = node.querySelector('.tool-status')?.textContent || '';
+      const args = node.querySelector('.tool-card-value.args')?.textContent || '';
+      const result = node.querySelector('.tool-card-value.result')?.textContent || '';
+      let block = `▸ ${name} (${status})`;
+      if (args) block += `\nargs:\n${args}`;
+      if (result) block += `\nresult:\n${result}`;
+      parts.push(block);
+    }
+  }
+  return parts.join('\n\n');
+}
+
+// 复制整段对话（遍历 #messages，user/ai 交替拼成 Markdown）
+function copyConversation() {
+  const items = $('messages').querySelectorAll('.message');
+  if (!items.length) { toast('没有可复制的对话'); return; }
+  const parts = [];
+  for (const msg of items) {
+    const bubble = msg.querySelector('.message-bubble');
+    if (msg.classList.contains('user')) {
+      const t = bubble?.textContent.trim();
+      if (t) parts.push(`## YOU\n${t}`);
+    } else {
+      const t = extractMessageText(bubble);
+      parts.push(`## AGENT\n${t || '(空)'}`);
+    }
+  }
+  copyText(parts.join('\n\n---\n\n'));
+}
+
 function setStatus(s) {
   const dot = $('statusDot'), text = $('statusText');
   dot.className = 'status-dot';
@@ -535,7 +596,14 @@ function createAiMessage() {
   const meta = el('div', 'message-meta');
   const roleSpan = el('span', 'role'); roleSpan.textContent = 'AGENT';
   const timeSpan = el('span', 'time'); timeSpan.textContent = now();
-  meta.appendChild(roleSpan); meta.appendChild(timeSpan);
+  const copyBtn = el('button', 'msg-copy-btn');
+  copyBtn.textContent = 'copy';
+  copyBtn.title = '复制本条回复';
+  copyBtn.onclick = () => {
+    if (m.classList.contains('streaming')) { toast('生成中，请结束后再复制'); return; }
+    copyText(extractMessageText(bubble));
+  };
+  meta.appendChild(roleSpan); meta.appendChild(timeSpan); meta.appendChild(copyBtn);
   const bubble = el('div', 'message-bubble');
   m.appendChild(meta); m.appendChild(bubble);
   msgs.appendChild(m);
@@ -817,7 +885,8 @@ function renderHistory(messages) {
     if (msg.role === 'user') {
       appendMessage('user', msg.content);
     } else {
-      const { bubble } = createAiMessage();
+      const { m, bubble } = createAiMessage();
+      m.classList.remove('streaming');  // 历史消息非流式：关掉光标 & 启用复制按钮
       if (msg.content) {
         const text = el('div', 'text-content');
         text.textContent = msg.content;
@@ -852,6 +921,9 @@ function renderHistory(messages) {
 }
 
 loadLastConversation();
+
+// 复制整段对话按钮
+$('copyConvBtn').onclick = copyConversation;
 
 // 初始日志
 log('SYS', '调试控制台已就绪。填写左侧连接信息建立 SSH 会话。', 'sys');
