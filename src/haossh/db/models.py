@@ -129,3 +129,20 @@ class Milestone(SQLModel, table=True):
     event_type: str                                         # error/solution/decision/done
     content: str                                            # 事件简述
     created_at: str = Field(default_factory=_now_iso)
+
+
+class AuditLog(SQLModel, table=True):
+    __tablename__ = "audit_logs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    tenant_id: str = Field(index=True)                    # 租户隔离 + 查询
+    actor_type: str                                       # "user" | "ai"  ← 责任界定关键
+    actor_id: str                                         # user_id（AI操作时也填发起用户）
+    conversation_id: str | None = Field(default=None, index=True)  # AI操作关联对话
+    connection_id: str | None = Field(default=None, index=True)    # 操作的SSH连接
+    action: str                                           # "ssh.exec" / "file.read" / ...
+    resource: str | None = None                           # 命令全文 或 文件路径
+    result: str                                           # "success" | "denied" | "error"
+    detail: str | None = None                             # exit_code + 输出摘要(前200字符)
+    source_ip: str | None = None                          # 用户操作时记
+    created_at: str = Field(default_factory=_now_iso, index=True)

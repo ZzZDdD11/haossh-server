@@ -20,6 +20,7 @@ from haossh.api.schemas.ssh_terminal import (
     ResizeTerminalRequest,
     WriteTerminalRequest,
 )
+from haossh.audit.logger import audit
 from haossh.auth.security import COOKIE_NAME, decode_token
 from haossh.db import repo_connection
 from haossh.ssh import terminal
@@ -133,6 +134,17 @@ async def exec_command(req: ExecCommandRequest, request: Request):
             connection_id=req.connection_id,
             command=req.command,
             timeout=req.timeout,
+        )
+        await audit(
+            tenant_id=request.state.tenant_id,
+            actor_type="user",
+            actor_id=request.state.user_id,
+            action="user.exec",
+            resource=req.command,
+            result="success" if exit_status == 0 else "error",
+            detail=f"exit={exit_status} stdout={stdout[:200]}",
+            connection_id=req.connection_id,
+            source_ip=request.client.host if request.client else None,
         )
         return _ok({"stdout": stdout, "stderr": stderr, "exitStatus": exit_status})
     except ValueError as e:

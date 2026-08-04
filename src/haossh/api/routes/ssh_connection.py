@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Request
 
 from haossh.api.schemas.ssh_connection import ConnectRequest, CreateConnectionRequest
+from haossh.audit.logger import audit
 from haossh.db import repo_connection
 from haossh.db.models import SSHConnection
 from haossh.ssh import session
@@ -212,6 +213,16 @@ async def connect(
                 )
                 await repo_connection.create(conn)
                 logger.info("连接信息已自动保存 connection_id=%s host=%s", cid, host)
+        await audit(
+            tenant_id=tenant_id,
+            actor_type="user",
+            actor_id=user_id,
+            action="ssh.connect",
+            resource=f"{username}@{host}:{port}",
+            result="success",
+            connection_id=cid,
+            source_ip=request.client.host if request.client else None,
+        )
         return _ok({"connectionId": cid})
     return _err("SSH 连接失败，请检查主机地址和认证信息")
 
@@ -224,6 +235,16 @@ async def disconnect(request: Request, connectionId: str = Query(..., alias="con
         return _err(f"连接不存在: {connectionId}")
     ok = await session.disconnect(connectionId)
     if ok:
+        await audit(
+            tenant_id=tenant_id,
+            actor_type="user",
+            actor_id=request.state.user_id,
+            action="ssh.disconnect",
+            resource=connectionId,
+            result="success",
+            connection_id=connectionId,
+            source_ip=request.client.host if request.client else None,
+        )
         return _ok()
     return _err("连接不存在或断开失败")
 

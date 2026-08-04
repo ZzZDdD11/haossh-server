@@ -27,6 +27,8 @@ async def chat_stream(req: ChatRequest, request: Request):
         session_id=req.session_id,
         terminal_session_id=req.terminal_session_id,
         allow_sudo=True,
+        user_id=user_id,
+        tenant_id=tenant_id,
     )
 
     async def generator():

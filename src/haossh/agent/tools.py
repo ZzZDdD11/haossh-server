@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import ToolDefinition
 
 from haossh.agent.deps import AgentDeps
+from haossh.audit.logger import audit
 from haossh.ssh import file as sftp
 from haossh.ssh import persistent_shell
 from haossh.ssh import terminal
@@ -72,6 +73,17 @@ async def execute_command(
         logger.warning(
             "拦截危险命令 session_id=%s command=%s",
             ctx.deps.session_id, command,
+        )
+        await audit(
+            tenant_id=ctx.deps.tenant_id,
+            actor_type="ai",
+            actor_id=ctx.deps.user_id,
+            action="ai.exec.denied",
+            resource=command,
+            result="denied",
+            detail=forbidden,
+            connection_id=ctx.deps.session_id,
+            conversation_id=ctx.deps.conversation_id or None,
         )
         return forbidden
 
@@ -155,6 +167,19 @@ async def execute_command(
             await _auto_record_milestone(ctx, "solution", f"命令成功恢复: {command[:80]}")
         ctx.deps.last_command_failed = False
 
+    # 审计：AI 执行命令
+    await audit(
+        tenant_id=ctx.deps.tenant_id,
+        actor_type="ai",
+        actor_id=ctx.deps.user_id,
+        action="ai.exec",
+        resource=command,
+        result="success" if exit_status == 0 else "error",
+        detail=f"exit={exit_status} stdout={stdout[:200]}",
+        connection_id=ctx.deps.session_id,
+        conversation_id=ctx.deps.conversation_id or None,
+    )
+
     return "\n".join(parts)
 
 
@@ -201,6 +226,18 @@ async def read_file(
         )
     elif not content:
         parts.append("(空文件)")
+    # 审计：AI 读取文件
+    await audit(
+        tenant_id=ctx.deps.tenant_id,
+        actor_type="ai",
+        actor_id=ctx.deps.user_id,
+        action="ai.file.read",
+        resource=path,
+        result="success",
+        detail=f"size={total} bytes",
+        connection_id=ctx.deps.session_id,
+        conversation_id=ctx.deps.conversation_id or None,
+    )
     return "\n".join(parts)
 
 
@@ -223,8 +260,30 @@ async def write_file(
     try:
         await sftp.save_content(ctx.deps.session_id, path, content)
     except Exception as e:
+        await audit(
+            tenant_id=ctx.deps.tenant_id,
+            actor_type="ai",
+            actor_id=ctx.deps.user_id,
+            action="ai.file.write",
+            resource=path,
+            result="error",
+            detail=str(e)[:200],
+            connection_id=ctx.deps.session_id,
+            conversation_id=ctx.deps.conversation_id or None,
+        )
         raise ModelRetry(f"写入文件失败 {path}: {e}") from e
 
+    await audit(
+        tenant_id=ctx.deps.tenant_id,
+        actor_type="ai",
+        actor_id=ctx.deps.user_id,
+        action="ai.file.write",
+        resource=path,
+        result="success",
+        detail=f"wrote {len(content)} chars",
+        connection_id=ctx.deps.session_id,
+        conversation_id=ctx.deps.conversation_id or None,
+    )
     return f"已写入 {path}（{len(content)} 字符）"
 
 
@@ -344,6 +403,18 @@ async def run_background(
     }
 
     logger.info("后台任务已启动 task_id=%s pid=%s command=%s", task_id, pid, command[:80])
+    # 审计：AI 后台执行命令
+    await audit(
+        tenant_id=ctx.deps.tenant_id,
+        actor_type="ai",
+        actor_id=ctx.deps.user_id,
+        action="ai.exec.bg",
+        resource=command,
+        result="success",
+        detail=f"task_id={task_id} pid={pid}",
+        connection_id=ctx.deps.session_id,
+        conversation_id=ctx.deps.conversation_id or None,
+    )
     return (
         f"后台任务已启动\n"
         f"[task_id={task_id}] [pid={pid}]\n"

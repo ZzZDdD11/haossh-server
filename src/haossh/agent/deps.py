@@ -18,3 +18,5 @@ class AgentDeps:
     max_command_timeout: int = 300           # 限制单命令最长执行时间
     last_command_failed: bool = False        # 规则层：跟踪上次命令是否失败（单轮内有效，用于自动记 solution）
     workspace_path: str | None = None        # 当前工作区路径（从 shell 真实 cwd 观测得到，非声明）
+    user_id: str = "default"                 # 操作者身份（审计日志用，AI操作时也填发起用户）
+    tenant_id: str = "default"               # 租户隔离边界（审计日志用）

@@ -15,6 +15,7 @@ from haossh.api.schemas.ssh_file import (
     RenameRequest,
     SaveContentRequest,
 )
+from haossh.audit.logger import audit
 from haossh.db import repo_connection
 from haossh.ssh import file as sftp
 
@@ -39,6 +40,24 @@ async def _require_owned_connection(connection_id: str, tenant_id: str) -> None:
     """
     if not await repo_connection.get_owned(connection_id, tenant_id):
         raise HTTPException(status_code=403, detail=f"连接不存在或无权访问: {connection_id}")
+
+
+async def _audit_file_op(
+    request: Request, action: str, connection_id: str, resource: str,
+    result: str = "success", detail: str | None = None,
+) -> None:
+    """记录文件操作审计日志（用户直接操作远程文件）。"""
+    await audit(
+        tenant_id=request.state.tenant_id,
+        actor_type="user",
+        actor_id=request.state.user_id,
+        action=action,
+        resource=resource,
+        result=result,
+        detail=detail,
+        connection_id=connection_id,
+        source_ip=request.client.host if request.client else None,
+    )
 
 
 # ── 文件浏览 ──────────────────────────────────────────────────
@@ -79,6 +98,7 @@ async def file_content(
     await _require_owned_connection(connectionId, request.state.tenant_id)
     try:
         content = await sftp.read_content(connectionId, path)
+        await _audit_file_op(request, "user.file.read", connectionId, path)
         return _ok({"content": content, "path": path})
     except ValueError as e:
         return _err(str(e))
@@ -96,6 +116,7 @@ async def file_content_chunk(
     await _require_owned_connection(connectionId, request.state.tenant_id)
     try:
         content = await sftp.read_chunk(connectionId, path, offset, size)
+        await _audit_file_op(request, "user.file.read", connectionId, path)
         return _ok({"content": content, "offset": offset, "size": size})
     except ValueError as e:
         return _err(str(e))
@@ -109,6 +130,7 @@ async def create_file(req: CreateFileRequest, request: Request):
     await _require_owned_connection(req.connection_id, request.state.tenant_id)
     try:
         await sftp.create_file(req.connection_id, req.path, req.content)
+        await _audit_file_op(request, "user.file.create", req.connection_id, req.path)
         return _ok()
     except ValueError as e:
         return _err(str(e))
@@ -120,6 +142,7 @@ async def save_content(req: SaveContentRequest, request: Request):
     await _require_owned_connection(req.connection_id, request.state.tenant_id)
     try:
         await sftp.save_content(req.connection_id, req.path, req.content)
+        await _audit_file_op(request, "user.file.save", req.connection_id, req.path)
         return _ok()
     except ValueError as e:
         return _err(str(e))
@@ -131,6 +154,7 @@ async def create_directory(req: CreateDirectoryRequest, request: Request):
     await _require_owned_connection(req.connection_id, request.state.tenant_id)
     try:
         await sftp.create_directory(req.connection_id, req.path)
+        await _audit_file_op(request, "user.file.mkdir", req.connection_id, req.path)
         return _ok()
     except ValueError as e:
         return _err(str(e))
@@ -144,6 +168,7 @@ async def rename_file(req: RenameRequest, request: Request):
     await _require_owned_connection(req.connection_id, request.state.tenant_id)
     try:
         await sftp.rename_file(req.connection_id, req.old_path, req.new_path)
+        await _audit_file_op(request, "user.file.rename", req.connection_id, f"{req.old_path} -> {req.new_path}")
         return _ok()
     except ValueError as e:
         return _err(str(e))
@@ -155,6 +180,7 @@ async def delete_file(req: DeleteRequest, request: Request):
     await _require_owned_connection(req.connection_id, request.state.tenant_id)
     try:
         await sftp.delete(req.connection_id, req.path)
+        await _audit_file_op(request, "user.file.delete", req.connection_id, req.path)
         return _ok()
     except ValueError as e:
         return _err(str(e))
@@ -172,6 +198,7 @@ async def upload_file(
     try:
         data = await file.read()
         await sftp.upload(connectionId, data, path)
+        await _audit_file_op(request, "user.file.upload", connectionId, path, detail=f"size={len(data)}")
         return _ok({"path": path, "size": len(data)})
     except ValueError as e:
         return _err(str(e))
@@ -187,6 +214,7 @@ async def download_file(
     await _require_owned_connection(connectionId, request.state.tenant_id)
     try:
         content = await sftp.download(connectionId, path)
+        await _audit_file_op(request, "user.file.download", connectionId, path, detail=f"size={len(content)}")
         filename = path.rsplit("/", 1)[-1] if "/" in path else path
         return Response(
             content=content,
