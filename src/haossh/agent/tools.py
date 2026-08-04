@@ -8,7 +8,6 @@ deps 由路由层在 agent.run_stream(deps=...) 时注入，LLM 看不到。
 
 import asyncio
 import logging
-import re
 import shlex
 import uuid
 from typing import Literal
@@ -20,32 +19,11 @@ from pydantic_ai.tools import ToolDefinition
 from haossh.agent.deps import AgentDeps
 from haossh.audit.logger import audit
 from haossh.ssh import file as sftp
+from haossh.ssh.security import check_forbidden
 from haossh.ssh import persistent_shell
 from haossh.ssh import terminal
 
 logger = logging.getLogger(__name__)
-
-
-# ── 危险命令拦截层 ───────────────────────────────────────────
-# 毁灭性命令：直接拒绝，不让 LLM 重试
-
-_FORBIDDEN_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"rm\s+-rf?\s+/(?:\s|$|\*)"),                    # rm -rf /  /  /*
-    re.compile(r"rm\s+-rf?\s+/\*"),                              # rm -rf /*
-    re.compile(r"dd\s+if=/dev/(?:zero|random|urandom)"),         # dd 覆写磁盘
-    re.compile(r"mkfs\.[a-z0-9]+"),                              # mkfs 格式化
-    re.compile(r":\(\)\s*\{\s*:\|:\&\s*\}\s*;:\s*\}"),          # fork bomb :(){ :|:& };:
-    re.compile(r">\s*/dev/sd[a-z]"),                             # 直写块设备
-    re.compile(r"chmod\s+-R\s+777\s+/\s*$"),                     # 全盘 777
-]
-
-
-def _check_forbidden(command: str) -> str | None:
-    """命中毁灭性命令返回拒绝原因，否则返回 None。"""
-    for pattern in _FORBIDDEN_PATTERNS:
-        if pattern.search(command):
-            return f"已拦截毁灭性命令（匹配规则: {pattern.pattern}）。请换用更安全的操作。"
-    return None
 
 
 # ── execute_command ──────────────────────────────────────────
@@ -68,7 +46,7 @@ async def execute_command(
         timeout: 命令超时秒数，会被会话上限约束（默认 60s）。
     """
     # 1. 危险命令拦截（毁灭性命令不交给 LLM 重试）
-    forbidden = _check_forbidden(command)
+    forbidden = check_forbidden(command)
     if forbidden:
         logger.warning(
             "拦截危险命令 session_id=%s command=%s",
@@ -368,7 +346,7 @@ async def run_background(
         command: 要后台执行的 shell 命令，如 "uv sync"、"apt install -y nginx"。
     """
     # 1. 危险命令拦截
-    forbidden = _check_forbidden(command)
+    forbidden = check_forbidden(command)
     if forbidden:
         return forbidden
 

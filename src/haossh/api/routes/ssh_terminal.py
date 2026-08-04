@@ -24,6 +24,7 @@ from haossh.audit.logger import audit
 from haossh.auth.security import COOKIE_NAME, decode_token
 from haossh.db import repo_connection
 from haossh.ssh import terminal
+from haossh.ssh.security import check_forbidden
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,21 @@ async def close_terminal(request: Request, terminalSessionId: str = Query(..., a
 async def exec_command(req: ExecCommandRequest, request: Request):
     """执行单条命令（非交互式，不走 PTY）。"""
     await _require_owned_connection(req.connection_id, request.state.tenant_id)
+    # 危险命令拦截（与 AI 工具层共用同一套规则）
+    forbidden = check_forbidden(req.command)
+    if forbidden:
+        await audit(
+            tenant_id=request.state.tenant_id,
+            actor_type="user",
+            actor_id=request.state.user_id,
+            action="user.exec.denied",
+            resource=req.command,
+            result="denied",
+            detail=forbidden,
+            connection_id=req.connection_id,
+            source_ip=request.client.host if request.client else None,
+        )
+        return _err(forbidden)
     try:
         stdout, stderr, exit_status = await terminal.exec_command(
             connection_id=req.connection_id,

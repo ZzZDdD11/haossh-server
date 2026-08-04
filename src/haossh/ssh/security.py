@@ -7,6 +7,7 @@
 import base64
 import logging
 import os
+import re
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -68,3 +69,29 @@ def decrypt(encrypted: str) -> str:
 
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
     return plaintext.decode("utf-8")
+
+
+# ── 危险命令拦截 ───────────────────────────────────────────────
+# 毁灭性命令：直接拒绝执行（AI 工具层和用户 HTTP 路由共用同一套规则）
+
+_FORBIDDEN_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"rm\s+-rf?\s+/(?:\s|$|\*)"),                    # rm -rf /  /  /*
+    re.compile(r"rm\s+-rf?\s+/\*"),                              # rm -rf /*
+    re.compile(r"dd\s+if=/dev/(?:zero|random|urandom)"),         # dd 覆写磁盘
+    re.compile(r"mkfs\.[a-z0-9]+"),                              # mkfs 格式化
+    re.compile(r":\(\)\s*\{\s*:\|:\&\s*\}\s*;:\s*\}"),          # fork bomb :(){ :|:& };:
+    re.compile(r">\s*/dev/sd[a-z]"),                             # 直写块设备
+    re.compile(r"chmod\s+-R\s+777\s+/\s*$"),                     # 全盘 777
+]
+
+
+def check_forbidden(command: str) -> str | None:
+    """命中毁灭性命令返回拒绝原因，否则返回 None。
+
+    被 AI 工具层（execute_command/run_background）和用户 HTTP 路由（/ssh/terminal/exec）
+    共用，确保两条路径的拦截规则一致。
+    """
+    for pattern in _FORBIDDEN_PATTERNS:
+        if pattern.search(command):
+            return f"已拦截毁灭性命令（匹配规则: {pattern.pattern}）。请换用更安全的操作。"
+    return None
