@@ -116,6 +116,17 @@ function copyConversation() {
   copyText(parts.join('\n\n---\n\n'));
 }
 
+// AI 操作审批弹窗：收到 approval_request SSE 事件时弹出确认框
+function showApprovalDialog(approvalId, action, resource) {
+  const msg = `AI 请求执行: ${action}\n目标: ${resource}\n\n确认执行？`;
+  const approved = confirm(msg);
+  fetch(`${API}/chat/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approval_id: approvalId, approved }),
+  });
+}
+
 function setStatus(s) {
   const dot = $('statusDot'), text = $('statusText');
   dot.className = 'status-dot';
@@ -744,6 +755,8 @@ async function sendMessage() {
           }
           writeAiResultToTerm(evt.result, ok);
           log('TOOL', `${evt.tool} → ${(evt.result || '').slice(0, 100)}`, ok ? 'res' : 'err');
+        } else if (evt.type === 'approval_request') {
+          showApprovalDialog(evt.approval_id, evt.action, evt.resource);
         } else if (evt.type === 'done') {
           if (evt.conversation_id) {
             state.conversationId = evt.conversation_id;

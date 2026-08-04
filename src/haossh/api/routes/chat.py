@@ -8,8 +8,9 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 
 from haossh.agent import agent
+from haossh.agent.approval import check_tool_approval, create_approval, resolve_approval
 from haossh.agent.deps import AgentDeps
-from haossh.api.schemas.chat import ChatRequest
+from haossh.api.schemas.chat import ApproveRequest, ChatRequest
 from haossh.db import repo_conversation
 from haossh.db.models import Conversation
 
@@ -85,9 +86,28 @@ async def chat_stream(req: ChatRequest, request: Request):
                     if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as stream:
                             async for event in stream:
+                                # 变更类操作审批：在工具执行前检测并推 approval_request 事件
+                                approval_payload = None
+                                if event.event_kind == "function_tool_call":
+                                    approval_need = check_tool_approval(
+                                        event.part.tool_name, event.part.args
+                                    )
+                                    if approval_need:
+                                        approval_id = create_approval(
+                                            approval_need["action"], approval_need["resource"]
+                                        )
+                                        deps.current_approval_id = approval_id
+                                        approval_payload = {
+                                            "type": "approval_request",
+                                            "approval_id": approval_id,
+                                            "action": approval_need["action"],
+                                            "resource": approval_need["resource"],
+                                        }
                                 payload = _event_to_payload(event)
                                 if payload is not None:
                                     yield _sse(payload)
+                                if approval_payload is not None:
+                                    yield _sse(approval_payload)
             # 存本轮新增消息（增量追加，不覆盖）
             await repo_conversation.append_messages(conv_id, run.new_messages())
         except Exception as e:
@@ -100,6 +120,19 @@ async def chat_stream(req: ChatRequest, request: Request):
         generator(),
         media_type="text/event-stream",
     )
+
+
+@router.post("/chat/approve")
+async def approve_action(req: ApproveRequest):
+    """用户确认/拒绝 AI 的高危操作。
+
+    前端收到 SSE approval_request 事件后弹窗，用户选择后调此接口。
+    后端 resolve_approval 触发 asyncio.Event.set()，唤醒暂停中的工具函数。
+    """
+    ok = resolve_approval(req.approval_id, req.approved)
+    if not ok:
+        return {"code": "1001", "info": "审批请求不存在或已处理", "data": None}
+    return {"code": "0000", "info": "成功", "data": None}
 
 
 def _sse(payload: dict) -> str:

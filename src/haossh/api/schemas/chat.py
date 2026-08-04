@@ -6,3 +6,8 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None       # 对话 ID（可选，没传则自动新建）
     terminal_session_id: str | None = None
+
+
+class ApproveRequest(BaseModel):
+    approval_id: str
+    approved: bool

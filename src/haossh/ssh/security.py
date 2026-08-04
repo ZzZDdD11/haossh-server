@@ -95,3 +95,36 @@ def check_forbidden(command: str) -> str | None:
         if pattern.search(command):
             return f"已拦截毁灭性命令（匹配规则: {pattern.pattern}）。请换用更安全的操作。"
     return None
+
+
+# ── 命令风险分级 ───────────────────────────────────────────────
+# dangerous（rm -rf / 等）已被 check_forbidden 拦截，不会走到分级这里。
+# 这里只区分 read（只读，AI 自主执行）和 mutate（变更，需用户确认）。
+
+_MUTATE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(systemctl|service)\s+\S+\s+(restart|stop|start|reload)"),   # 服务管理
+    re.compile(r"\b(kill|killall|pkill)\b"),                                     # 杀进程
+    re.compile(r"\b(chmod|chown)\b"),                                            # 权限修改
+    re.compile(r"\brm\b"),                                                       # 删除（根目录已被 check_forbidden 拦）
+    re.compile(r"\b(apt|apt-get|yum|dnf|pip|pip3|npm|yarn)\s+(install|remove|uninstall|purge)"),  # 包管理
+    re.compile(r">\s*\S"),                                                       # 重定向写入（> >> 2> 都匹配）
+    re.compile(r"\bcrontab\b"),                                                  # 定时任务
+    re.compile(r"\biptables\b"),                                                 # 防火墙
+    re.compile(r"\buser(add|del|mod)\b"),                                        # 用户管理
+    re.compile(r"\b(ifconfig|ip\s+route)\b"),                                    # 网络配置
+]
+
+
+def classify_command_risk(command: str) -> str:
+    """判断命令风险级别，返回 'read' 或 'mutate'。
+
+    - read: 只读查询类（ls/cat/grep/ps/df 等），AI 可自主执行
+    - mutate: 变更类（restart/rm/chmod/包管理/重定向写入等），需用户确认
+    - dangerous（rm -rf / 等）已被 check_forbidden 拦截，不会走到这里
+
+    误匹配代价低（多确认一次），漏匹配代价高（数据被改），宁可多拦。
+    """
+    for pattern in _MUTATE_PATTERNS:
+        if pattern.search(command):
+            return "mutate"
+    return "read"

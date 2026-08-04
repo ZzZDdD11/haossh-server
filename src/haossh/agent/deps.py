@@ -20,3 +20,4 @@ class AgentDeps:
     workspace_path: str | None = None        # 当前工作区路径（从 shell 真实 cwd 观测得到，非声明）
     user_id: str = "default"                 # 操作者身份（审计日志用，AI操作时也填发起用户）
     tenant_id: str = "default"               # 租户隔离边界（审计日志用）
+    current_approval_id: str | None = None  # SSE生成器设，工具函数读+消费（审批暂停用）

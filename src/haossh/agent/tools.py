@@ -16,14 +16,46 @@ from pydantic_ai import RunContext, Tool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import ToolDefinition
 
+from haossh.agent.approval import cleanup_approval, get_approval
 from haossh.agent.deps import AgentDeps
 from haossh.audit.logger import audit
 from haossh.ssh import file as sftp
-from haossh.ssh.security import check_forbidden
+from haossh.ssh.security import check_forbidden, classify_command_risk
 from haossh.ssh import persistent_shell
 from haossh.ssh import terminal
 
 logger = logging.getLogger(__name__)
+
+
+# ── 审批暂停 ─────────────────────────────────────────────────
+
+async def _await_approval(ctx: RunContext[AgentDeps]) -> str | None:
+    """等待用户审批变更类操作。返回 None 表示已批准，返回字符串表示拒绝原因。
+
+    依赖 SSE 生成器在 function_tool_call 事件时设置的 deps.current_approval_id。
+    如果 current_approval_id 为 None（只读操作或 SSE 未拦截），直接放行。
+    """
+    approval_id = ctx.deps.current_approval_id
+    ctx.deps.current_approval_id = None  # 消费，防重复使用
+
+    if not approval_id:
+        return None  # 不需要审批
+
+    item = get_approval(approval_id)
+    if item is None:
+        return "审批会话已失效或已过期，请重新发起操作"
+
+    try:
+        await asyncio.wait_for(item["event"].wait(), timeout=120)
+    except asyncio.TimeoutError:
+        cleanup_approval(approval_id)
+        return "用户未在 120 秒内确认，操作已取消"
+
+    approved = item["approved"]
+    cleanup_approval(approval_id)
+    if not approved:
+        return "用户拒绝了此操作"
+    return None  # 已批准
 
 
 # ── execute_command ──────────────────────────────────────────
@@ -64,6 +96,12 @@ async def execute_command(
             conversation_id=ctx.deps.conversation_id or None,
         )
         return forbidden
+
+    # 1.5 变更类命令需用户确认（read 类自主执行）
+    if classify_command_risk(command) == "mutate":
+        rejected = await _await_approval(ctx)
+        if rejected:
+            return rejected
 
     # 2. sudo 权限检查
     if "sudo" in command and not ctx.deps.allow_sudo:
@@ -235,6 +273,11 @@ async def write_file(
         path: 远程文件绝对路径
         content: 要写入的完整内容
     """
+    # 写文件需用户确认
+    rejected = await _await_approval(ctx)
+    if rejected:
+        return rejected
+
     try:
         await sftp.save_content(ctx.deps.session_id, path, content)
     except Exception as e:
@@ -349,6 +392,11 @@ async def run_background(
     forbidden = check_forbidden(command)
     if forbidden:
         return forbidden
+
+    # 1.5 后台命令需用户确认
+    rejected = await _await_approval(ctx)
+    if rejected:
+        return rejected
 
     # 2. 生成 task_id 和日志路径
     task_id = uuid.uuid4().hex[:8]
