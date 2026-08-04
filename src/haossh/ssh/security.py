@@ -128,3 +128,46 @@ def classify_command_risk(command: str) -> str:
         if pattern.search(command):
             return "mutate"
     return "read"
+
+
+# ── Prompt 注入检测 ───────────────────────────────────────────
+# 检测用户消息中的注入攻击：指令覆盖、角色伪装、越狱、指令提取
+
+_INJECTION_PATTERNS: list[re.Pattern[str]] = [
+    # 直接指令覆盖（英文）
+    re.compile(r"(?i)ignore\s+(previous|above|all|prior)\s+(instructions?|prompts?|rules?)"),
+    re.compile(r"(?i)disregard\s+(previous|above|all|prior)\s+(instructions?|prompts?)"),
+    re.compile(r"(?i)forget\s+(previous|above|all|prior)\s+(instructions?|prompts?)"),
+    # 直接指令覆盖（中文）
+    re.compile(r"忽略?(以上|前面|之前|上述)的?(指令|提示|规则|限制|约束)"),
+    re.compile(r"无视?(以上|前面|之前|上述)的?(指令|提示|规则|限制|约束)"),
+    re.compile(r"不要遵守?(你的|任何)?(指令|提示|规则|限制|约束)"),
+    # 角色伪装
+    re.compile(r"(?i)\b(system|assistant)\s*:"),                    # 伪装角色标记
+    re.compile(r"(?i)you\s+are\s+now\s+(a|an)\s"),                  # 角色重定义
+    re.compile(r"(?i)pretend\s+(you\s+are|to\s+be)\s"),
+    re.compile(r"(?i)act\s+as\s+(if|a|an)\s"),
+    # 越狱关键词
+    re.compile(r"(?i)\bjailbreak\b"),
+    re.compile(r"(?i)\bDAN\s+mode\b"),
+    re.compile(r"(?i)developer\s+mode"),
+    re.compile(r"(?i)unrestricted\s+mode"),
+    # 指令提取/泄露
+    re.compile(r"(?i)(show|reveal|print|output)\s+(me\s+)?(your|the)\s+(system|initial)\s+(prompt|instructions?)"),
+    re.compile(r"(?i)what\s+(are|is)\s+your\s+(system|initial)\s+(prompt|instructions?)"),
+]
+
+
+def check_prompt_injection(message: str) -> str | None:
+    """检测 prompt 注入。命中返回警告，否则 None。
+
+    检测四类注入：
+    - 直接指令覆盖："忽略以上指令"、"ignore previous instructions"
+    - 角色伪装："system:"、"you are now a"、"act as"
+    - 越狱关键词：jailbreak、DAN mode、developer mode
+    - 指令提取：要求泄露 system prompt
+    """
+    for pattern in _INJECTION_PATTERNS:
+        if pattern.search(message):
+            return f"检测到疑似 prompt 注入（匹配规则: {pattern.pattern}）。请直接描述你的运维需求，不要尝试操纵 AI 的行为。"
+    return None

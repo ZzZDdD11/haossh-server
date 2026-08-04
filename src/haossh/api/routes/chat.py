@@ -13,6 +13,7 @@ from haossh.agent.deps import AgentDeps
 from haossh.api.schemas.chat import ApproveRequest, ChatRequest
 from haossh.db import repo_conversation
 from haossh.db.models import Conversation
+from haossh.ssh.security import check_prompt_injection
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,13 @@ async def chat_stream(req: ChatRequest, request: Request):
 
         # 设置 conversation_id 到 deps，供 record_milestone 和 milestone_summary 使用
         deps.conversation_id = conv_id
+
+        # 防线1: prompt 注入检测（调 agent 前拦截）
+        injection = check_prompt_injection(req.message)
+        if injection:
+            yield _sse({"type": "error", "message": injection})
+            yield _sse({"type": "done", "conversation_id": conv_id})
+            return
 
         try:
             # 用 agent.iter() 而非 run_stream()，才能拿到完整事件流
